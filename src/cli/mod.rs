@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod mutate;
 pub mod output;
 pub mod selector;
 

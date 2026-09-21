@@ -1,3 +1,5 @@
+// Shared fixture builder; not every test binary uses every helper.
+#![allow(dead_code)]
 use std::fs;
 use std::path::{Path, PathBuf};
 

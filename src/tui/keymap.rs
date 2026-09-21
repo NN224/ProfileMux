@@ -22,8 +22,8 @@ pub enum Action {
     RenameProfile,
     DeleteProfile,
     LaunchProfile,
-    Template,
-    Health,
+    SetAvatar,
+    Doctor,
     CleanCache,
 }
 
@@ -57,7 +57,7 @@ pub fn map_key(key: KeyEvent) -> Option<Action> {
     }
 
     match key.code {
-        KeyCode::Char('q') => Some(Action::Quit),
+        KeyCode::Char('q') | KeyCode::Char('Q') => Some(Action::Quit),
         KeyCode::Tab => Some(Action::FocusNext),
         KeyCode::BackTab => Some(Action::FocusPrev),
         KeyCode::Char('h') | KeyCode::Left => Some(Action::FocusLeft),
@@ -66,18 +66,19 @@ pub fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('j') | KeyCode::Down => Some(Action::MoveDown),
         KeyCode::Char('/') => Some(Action::StartSearch),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
-        KeyCode::Char('b') => Some(Action::ToggleBrowserDetails),
-        KeyCode::Enter => Some(Action::ToggleProfileDetails),
+        KeyCode::Char('b') | KeyCode::Char('B') => Some(Action::ToggleBrowserDetails),
+        KeyCode::Char('i') | KeyCode::Char('I') => Some(Action::ToggleProfileDetails),
+        KeyCode::Enter => Some(Action::LaunchProfile),
         KeyCode::Esc => Some(Action::CloseOverlay),
-        KeyCode::Char('r') => Some(Action::Refresh),
-        KeyCode::Char('R') => Some(Action::RenameProfile),
+        KeyCode::F(5) => Some(Action::Refresh),
+        KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::RenameProfile),
         KeyCode::Char('n') | KeyCode::Char('N') => Some(Action::NewProfile),
         KeyCode::Char('c') | KeyCode::Char('C') => Some(Action::CloneProfile),
         KeyCode::Char('d') | KeyCode::Char('D') => Some(Action::DeleteProfile),
         KeyCode::Char('L') => Some(Action::LaunchProfile),
+        KeyCode::Char('a') | KeyCode::Char('A') => Some(Action::SetAvatar),
         KeyCode::Char('o') | KeyCode::Char('O') => Some(Action::OpenFolder),
-        KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::Template),
-        KeyCode::Char('H') => Some(Action::Health),
+        KeyCode::Char('H') => Some(Action::Doctor),
         KeyCode::Char('x') | KeyCode::Char('X') => Some(Action::CleanCache),
         _ => None,
     }
@@ -121,5 +122,25 @@ mod tests {
         assert_eq!(Focus::Browsers.prev(), Focus::Details);
         assert_eq!(Focus::Details.prev(), Focus::Profiles);
         assert_eq!(Focus::Profiles.prev(), Focus::Browsers);
+    }
+
+    #[test]
+    fn test_key_mappings() {
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Enter)),
+            Some(Action::LaunchProfile)
+        );
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Char('i'))),
+            Some(Action::ToggleProfileDetails)
+        );
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Char('a'))),
+            Some(Action::SetAvatar)
+        );
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Char('H'))),
+            Some(Action::Doctor)
+        );
     }
 }

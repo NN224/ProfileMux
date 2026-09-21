@@ -1,9 +1,14 @@
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand};
 
 use crate::browsers::BrowserAdapter;
 use crate::cli::output;
 use crate::cli::selector;
-use crate::domain::{BrowserInstall, BrowserProfile, HealthFinding};
+use crate::domain::{
+    BrowserInstall, BrowserProfile, ClonePolicy, CloneProfileSpec, CreateProfileSpec,
+    ExtensionPolicy, HealthFinding,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "pmux", about = "Cross-browser profile manager", version)]
@@ -24,6 +29,12 @@ pub enum Command {
     Profile {
         #[command(subcommand)]
         command: ProfileSubcommand,
+    },
+
+    /// Cache operations across browsers
+    Cache {
+        #[command(subcommand)]
+        command: CacheSubcommand,
     },
 
     /// Diagnose browser installations and profile stores
@@ -52,16 +63,40 @@ pub struct ProfilesArgs {
     pub json: bool,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum ProfileSubcommand {
     /// Show full details for one profile
     Show(ProfileShowArgs),
 
     /// Open or reveal a profile directory
     Open(ProfileOpenArgs),
+
+    /// Launch a profile in its browser
+    Launch(ProfileLaunchArgs),
+
+    /// Create a new profile
+    Create(ProfileCreateArgs),
+
+    /// Clone an existing profile
+    Clone(ProfileCloneArgs),
+
+    /// Rename a profile display name or directory
+    Rename(ProfileRenameArgs),
+
+    /// Set a profile avatar image
+    Avatar(ProfileAvatarArgs),
+
+    /// Delete a profile and move it to Trash
+    Delete(ProfileDeleteArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Subcommand, Debug, Clone)]
+pub enum CacheSubcommand {
+    /// Clean cache for a profile
+    Clean(CacheCleanArgs),
+}
+
+#[derive(Args, Debug, Clone)]
 pub struct ProfileShowArgs {
     /// Profile selector (ProfileId, slug/dir, or name)
     pub selector: String,
@@ -71,10 +106,189 @@ pub struct ProfileShowArgs {
     pub json: bool,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct ProfileOpenArgs {
     /// Profile selector (ProfileId, slug/dir, or name)
     pub selector: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileLaunchArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileCreateArgs {
+    /// Target browser slug
+    #[arg(long)]
+    pub browser: String,
+
+    /// Profile display name
+    #[arg(long)]
+    pub name: String,
+
+    /// Profile directory name
+    #[arg(long)]
+    pub directory: Option<String>,
+
+    /// Template profile display name or directory within the browser
+    #[arg(long)]
+    pub template: Option<String>,
+
+    /// Path to avatar image
+    #[arg(long)]
+    pub avatar: Option<PathBuf>,
+
+    /// Extension copy policy (none, copy, copy-settings)
+    #[arg(long, default_value = "none", value_parser = parse_extension_policy)]
+    pub extensions: ExtensionPolicy,
+
+    /// Open browser after profile creation
+    #[arg(long)]
+    pub open: bool,
+
+    /// Simulate profile creation without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
+}
+
+impl ProfileCreateArgs {
+    pub fn to_spec(&self) -> CreateProfileSpec {
+        CreateProfileSpec {
+            display_name: self.name.clone(),
+            directory: self.directory.clone(),
+            template_directory: self.template.clone(),
+            avatar_source: self.avatar.clone(),
+            clone_policy: ClonePolicy {
+                copy_preferences: true,
+                copy_bookmarks: false,
+                extensions: self.extensions,
+            },
+            open_after_create: self.open,
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileCloneArgs {
+    /// Source profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// Profile display name
+    #[arg(long)]
+    pub name: String,
+
+    /// Profile directory name
+    #[arg(long)]
+    pub directory: Option<String>,
+
+    /// Path to avatar image
+    #[arg(long)]
+    pub avatar: Option<PathBuf>,
+
+    /// Extension copy policy (none, copy, copy-settings)
+    #[arg(long, default_value = "none", value_parser = parse_extension_policy)]
+    pub extensions: ExtensionPolicy,
+
+    /// Open browser after profile creation
+    #[arg(long)]
+    pub open: bool,
+
+    /// Simulate profile clone without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
+}
+
+impl ProfileCloneArgs {
+    pub fn to_spec(&self) -> CloneProfileSpec {
+        CloneProfileSpec {
+            display_name: self.name.clone(),
+            directory: self.directory.clone(),
+            avatar_source: self.avatar.clone(),
+            clone_policy: ClonePolicy {
+                copy_preferences: true,
+                copy_bookmarks: false,
+                extensions: self.extensions,
+            },
+            open_after_create: self.open,
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileRenameArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// New display name
+    #[arg(long, required_unless_present = "directory")]
+    pub name: Option<String>,
+
+    /// New directory name (experimental)
+    #[arg(long, required_unless_present = "name")]
+    pub directory: Option<String>,
+
+    /// Simulate rename without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileAvatarArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// Path to avatar image
+    pub image: PathBuf,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProfileDeleteArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// Simulate deletion without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip interactive confirmation
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct CacheCleanArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// Simulate cache clean without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip interactive confirmation
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
 }
 
 #[derive(Args, Debug)]
@@ -88,6 +302,46 @@ pub struct DoctorArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreflightDecision {
+    Proceed,
+    RequestQuit,
+    Refuse,
+}
+
+pub fn decide_browser_preflight(is_running: bool, close_browser: bool) -> PreflightDecision {
+    if !is_running {
+        PreflightDecision::Proceed
+    } else if close_browser {
+        PreflightDecision::RequestQuit
+    } else {
+        PreflightDecision::Refuse
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmDecision {
+    Proceed,
+    Prompt,
+    Refuse,
+}
+
+pub fn decide_confirmation(yes: bool, is_terminal: bool) -> ConfirmDecision {
+    if yes {
+        ConfirmDecision::Proceed
+    } else if !is_terminal {
+        ConfirmDecision::Refuse
+    } else {
+        ConfirmDecision::Prompt
+    }
+}
+
+pub fn parse_extension_policy(s: &str) -> std::result::Result<ExtensionPolicy, String> {
+    ExtensionPolicy::from_cli(s).ok_or_else(|| {
+        format!("invalid extension policy `{s}`, expected `none`, `copy`, or `copy-settings`")
+    })
+}
+
 pub fn execute(command: Command) -> anyhow::Result<std::process::ExitCode> {
     match command {
         Command::Browsers(args) => run_browsers(args),
@@ -95,6 +349,15 @@ pub fn execute(command: Command) -> anyhow::Result<std::process::ExitCode> {
         Command::Profile { command: sub } => match sub {
             ProfileSubcommand::Show(args) => run_profile_show(args),
             ProfileSubcommand::Open(args) => run_profile_open(args),
+            ProfileSubcommand::Launch(args) => crate::cli::mutate::run_profile_launch(args),
+            ProfileSubcommand::Create(args) => crate::cli::mutate::run_profile_create(args),
+            ProfileSubcommand::Clone(args) => crate::cli::mutate::run_profile_clone(args),
+            ProfileSubcommand::Rename(args) => crate::cli::mutate::run_profile_rename(args),
+            ProfileSubcommand::Avatar(args) => crate::cli::mutate::run_profile_avatar(args),
+            ProfileSubcommand::Delete(args) => crate::cli::mutate::run_profile_delete(args),
+        },
+        Command::Cache { command: sub } => match sub {
+            CacheSubcommand::Clean(args) => crate::cli::mutate::run_cache_clean(args),
         },
         Command::Doctor(args) => run_doctor(args),
     }

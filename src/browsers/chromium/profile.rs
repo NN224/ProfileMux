@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::browsers::BrowserAdapter;
 use crate::domain::{
-    AvatarInfo, BrowserCapabilities, BrowserInstall, BrowserProfile, HealthFinding, ProfileId,
-    ProfileStoreSnapshot,
+    AvatarInfo, BrowserCapabilities, BrowserInstall, BrowserKind, BrowserProfile, CloneProfileSpec,
+    CreateProfileSpec, DeleteMode, HealthFinding, OperationPlan, ProfileId, ProfileStoreSnapshot,
 };
 use crate::error::{Error, Result};
 
@@ -149,7 +149,23 @@ impl BrowserAdapter for ChromiumAdapter {
     }
 
     fn capabilities(&self) -> BrowserCapabilities {
-        BrowserCapabilities::READ_ONLY
+        let custom_avatar = matches!(
+            self.install.kind,
+            BrowserKind::Brave | BrowserKind::BraveBeta | BrowserKind::BraveNightly
+        );
+        BrowserCapabilities {
+            launch: true,
+            open_folder: true,
+            create: true,
+            rename_display_name: true,
+            rename_directory: true,
+            clone: true,
+            delete: true,
+            clean_cache: true,
+            custom_avatar,
+            experimental_custom_avatar: custom_avatar,
+            experimental_rename_directory: true,
+        }
     }
 
     fn snapshot(&self) -> Result<ProfileStoreSnapshot> {
@@ -179,8 +195,83 @@ impl BrowserAdapter for ChromiumAdapter {
     }
 
     fn is_running(&self) -> bool {
-        let lock_path = self.install.user_data_root.join("SingletonLock");
-        std::fs::symlink_metadata(&lock_path).is_ok()
+        super::launch::is_running(&self.install)
+    }
+
+    fn request_quit(&self) -> Result<()> {
+        super::launch::request_quit(&self.install)
+    }
+
+    fn launch_profile(&self, profile: &BrowserProfile) -> Result<()> {
+        super::launch::launch(&self.install, &profile.directory)
+    }
+
+    fn plan_create(&self, spec: &CreateProfileSpec) -> Result<OperationPlan> {
+        super::mutation::plan_create(&self.install, spec)
+    }
+
+    fn create_profile(&self, spec: &CreateProfileSpec) -> Result<BrowserProfile> {
+        super::mutation::create_profile(&self.install, spec)
+    }
+
+    fn plan_clone(
+        &self,
+        source: &BrowserProfile,
+        spec: &CloneProfileSpec,
+    ) -> Result<OperationPlan> {
+        super::mutation::plan_clone(&self.install, source, spec)
+    }
+
+    fn clone_profile(
+        &self,
+        source: &BrowserProfile,
+        spec: &CloneProfileSpec,
+    ) -> Result<BrowserProfile> {
+        super::mutation::clone_profile(&self.install, source, spec)
+    }
+
+    fn rename_display_name(&self, profile: &BrowserProfile, new_name: &str) -> Result<()> {
+        super::mutation::rename_display_name(&self.install, profile, new_name)
+    }
+
+    fn plan_rename_directory(
+        &self,
+        profile: &BrowserProfile,
+        new_directory: &str,
+    ) -> Result<OperationPlan> {
+        super::mutation::plan_rename_directory(&self.install, profile, new_directory)
+    }
+
+    fn rename_profile_directory(
+        &self,
+        profile: &BrowserProfile,
+        new_directory: &str,
+    ) -> Result<()> {
+        super::mutation::rename_profile_directory(&self.install, profile, new_directory)
+    }
+
+    fn plan_set_avatar(&self, profile: &BrowserProfile, image: &Path) -> Result<OperationPlan> {
+        super::mutation::plan_set_avatar(&self.install, profile, image)
+    }
+
+    fn set_avatar(&self, profile: &BrowserProfile, image: &Path) -> Result<()> {
+        super::mutation::set_avatar(&self.install, profile, image)
+    }
+
+    fn plan_delete(&self, profile: &BrowserProfile, mode: DeleteMode) -> Result<OperationPlan> {
+        super::mutation::plan_delete(&self.install, profile, mode)
+    }
+
+    fn delete_profile(&self, profile: &BrowserProfile, mode: DeleteMode) -> Result<()> {
+        super::mutation::delete_profile(&self.install, profile, mode)
+    }
+
+    fn plan_clean_cache(&self, profile: &BrowserProfile) -> Result<OperationPlan> {
+        super::mutation::plan_clean_cache(&self.install, profile)
+    }
+
+    fn clean_cache(&self, profile: &BrowserProfile) -> Result<u64> {
+        super::mutation::clean_cache(&self.install, profile)
     }
 }
 

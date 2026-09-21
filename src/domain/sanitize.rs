@@ -9,9 +9,7 @@ pub fn sanitize_directory_name(display_name: &str) -> Option<String> {
     let mapped: String = display_name
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else if c == '_' || c == '.' {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
                 c
             } else {
                 '-'

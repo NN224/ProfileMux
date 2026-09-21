@@ -123,3 +123,47 @@ pub fn collect_installed_profiles(
     }
     Ok(result)
 }
+
+/// Resolves a template profile within a specific browser installation.
+///
+/// Accepts a directory name or case-insensitive display name.
+/// If ambiguous within that browser, returns `Error::AmbiguousSelector` with candidate list.
+pub fn resolve_template_in_browser<'a>(
+    install: &'a BrowserInstall,
+    profiles: &'a [BrowserProfile],
+    template: &str,
+) -> Result<&'a BrowserProfile> {
+    let clean_template = if let Some((slug, dir)) = template.split_once('/') {
+        if slug == install.kind.slug() {
+            dir
+        } else {
+            template
+        }
+    } else {
+        template
+    };
+
+    let matches: Vec<_> = profiles
+        .iter()
+        .filter(|p| {
+            p.directory == clean_template || p.display_name.eq_ignore_ascii_case(clean_template)
+        })
+        .collect();
+
+    match matches.len() {
+        0 => Err(Error::NoSuchProfile(template.to_string())),
+        1 => Ok(matches[0]),
+        _ => {
+            let mut candidates: Vec<String> = matches
+                .iter()
+                .map(|p| format!("{}/{}", install.kind.slug(), p.directory))
+                .collect();
+            candidates.sort();
+            candidates.dedup();
+            Err(Error::AmbiguousSelector {
+                selector: template.to_string(),
+                candidates,
+            })
+        }
+    }
+}

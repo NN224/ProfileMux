@@ -1,5 +1,7 @@
 pub mod app;
+pub mod dialogs;
 pub mod events;
+pub mod form;
 pub mod keymap;
 pub mod render;
 pub mod sizes;
@@ -58,12 +60,18 @@ pub fn run() -> anyhow::Result<()> {
 
     while !app.should_quit {
         app.drain_scan_results();
+        app.tick();
 
         terminal
             .draw(|frame| {
                 render::render(frame, &app);
             })
             .context("failed to draw terminal frame")?;
+
+        if app.pending_mutation.is_some() {
+            app.execute_pending_mutation();
+            continue;
+        }
 
         if event::poll(Duration::from_millis(100)).context("event poll failed")? {
             match event::read().context("event read failed")? {

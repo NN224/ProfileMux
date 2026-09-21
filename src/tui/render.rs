@@ -22,7 +22,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_status_line(frame, chunks[1], app);
     render_action_bar(frame, chunks[2], app);
 
-    if app.show_help {
+    if let Some(dialog) = &app.active_dialog {
+        crate::tui::dialogs::render_dialog(frame, app, dialog);
+    } else if app.show_help {
         render_help_overlay(frame);
     } else if app.show_browser_overlay {
         render_browser_overlay(frame, app);
@@ -388,37 +390,36 @@ fn render_action_bar(frame: &mut Frame, area: Rect, app: &App) {
         ("D", "Delete", caps.map(|c| c.delete).unwrap_or(false)),
         ("L", "Launch", caps.map(|c| c.launch).unwrap_or(false)),
         (
-            "O",
-            "Open Folder",
-            caps.map(|c| c.open_folder).unwrap_or(false),
+            "A",
+            "Avatar",
+            caps.map(|c| c.custom_avatar).unwrap_or(false),
         ),
-        ("T", "Template", false),
-        ("H", "Health", true),
-        (
-            "X",
-            "Clean Cache",
-            caps.map(|c| c.clean_cache).unwrap_or(false),
-        ),
+        ("O", "Folder", caps.map(|c| c.open_folder).unwrap_or(false)),
+        ("X", "Clean", caps.map(|c| c.clean_cache).unwrap_or(false)),
+        ("H", "Doctor", true),
         ("/", "Search", true),
         ("?", "Help", true),
         ("Q", "Quit", true),
     ];
 
-    let mut spans = Vec::with_capacity(actions.len() * 2);
-    for (key, label, enabled) in actions {
-        if enabled {
+    let mut spans = Vec::with_capacity(actions.len() * 3);
+    for (i, (key, label, enabled)) in actions.iter().enumerate() {
+        if *enabled {
             spans.push(Span::styled(
-                format!("[{key}]"),
+                *key,
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::raw(format!(" {label}  ")));
+            spans.push(Span::raw(format!(" {label}")));
         } else {
             spans.push(Span::styled(
-                format!("[{key}] {label}  "),
+                format!("{key} {label}"),
                 Style::default().fg(Color::DarkGray),
             ));
+        }
+        if i + 1 < actions.len() {
+            spans.push(Span::raw("   "));
         }
     }
 
@@ -466,22 +467,23 @@ fn render_help_overlay(frame: &mut Frame) {
         detail_line("Tab / Shift-Tab: ", "Cycle focus between panes"),
         detail_line("h / l:           ", "Move focus left / right"),
         detail_line("/:               ", "Filter profiles by name or directory"),
+        detail_line("Enter / L:       ", "Launch selected profile"),
+        detail_line("i:               ", "Profile details overlay (fullscreen)"),
+        detail_line("b:               ", "Browser details overlay (fullscreen)"),
         detail_line(
-            "Enter:           ",
-            "Accept filter / Fullscreen profile details",
+            "Esc:             ",
+            "Clear filter / Close dialog or overlay",
         ),
-        detail_line("Esc:             ", "Clear filter / Close open overlay"),
-        detail_line("r:               ", "Re-scan storage for selected profile"),
-        detail_line("b:               ", "Fullscreen browser details overlay"),
+        detail_line("F5:              ", "Re-scan storage for selected profile"),
+        detail_line("N:               ", "New profile form"),
+        detail_line("C:               ", "Clone profile form"),
+        detail_line("R:               ", "Rename display name"),
+        detail_line("D:               ", "Delete profile (moves to Trash)"),
+        detail_line("A:               ", "Set custom profile avatar"),
         detail_line("O:               ", "Open profile folder in Finder"),
-        detail_line("N:               ", "New profile (if supported)"),
-        detail_line("C:               ", "Clone profile (if supported)"),
-        detail_line("R:               ", "Rename profile (if supported)"),
-        detail_line("D:               ", "Delete profile (if supported)"),
-        detail_line("L:               ", "Launch profile (if supported)"),
-        detail_line("T:               ", "Profile template"),
-        detail_line("H:               ", "Health summary"),
-        detail_line("X:               ", "Clean cache (if supported)"),
+        detail_line("X:               ", "Clean cache"),
+        detail_line("H:               ", "Doctor health findings"),
+        detail_line("?:               ", "Toggle this help overlay"),
         detail_line("q / Ctrl-C:      ", "Quit pmux"),
     ];
 
