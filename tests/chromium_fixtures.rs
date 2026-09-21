@@ -3,6 +3,7 @@ mod common;
 use common::ChromiumFixture;
 use profilemux::browsers::chromium::ChromiumAdapter;
 use profilemux::browsers::BrowserAdapter;
+use profilemux::domain::BrowserProfile;
 use profilemux::fs::{format_bytes, measure_profile};
 use serde_json::json;
 
@@ -222,4 +223,135 @@ fn test_is_running_singleton_lock() {
 
     std::fs::remove_file(&lock_path).expect("remove lock file");
     assert!(!adapter.is_running());
+}
+
+#[test]
+fn test_account_email_populated() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name(
+        "Default",
+        Some("Personal"),
+        Some("person@example.com"),
+    );
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, Some("person@example.com".to_string()));
+}
+
+#[test]
+fn test_account_email_empty_string_is_none() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name("Default", Some("Personal"), Some(""));
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, None);
+}
+
+#[test]
+fn test_account_email_whitespace_only_is_none() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name("Default", Some("Personal"), Some("   \t\n  "));
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, None);
+}
+
+#[test]
+fn test_account_email_missing_key_is_none() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name("Default", Some("Personal"), None);
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, None);
+}
+
+#[test]
+fn test_account_email_trimmed() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name(
+        "Default",
+        Some("Personal"),
+        Some("  person@example.com  \n"),
+    );
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, Some("person@example.com".to_string()));
+}
+
+#[test]
+fn test_account_email_gaia_id_never_substituted() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_entry(
+        "Default",
+        json!({
+            "name": "Personal",
+            "gaia_id": "123456789012345678901",
+        }),
+        true,
+    );
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+
+    let p = snapshot
+        .find_by_directory("Default")
+        .expect("Default found");
+    assert_eq!(p.account_email, None);
+}
+
+#[test]
+fn test_account_email_serde_round_trip() {
+    let mut fixture = ChromiumFixture::new();
+    fixture.add_registered_profile_with_user_name(
+        "Default",
+        Some("Personal"),
+        Some("person@example.com"),
+    );
+
+    let adapter = ChromiumAdapter::new(fixture.install());
+    let snapshot = adapter.snapshot().expect("snapshot should succeed");
+    let profile = snapshot
+        .find_by_directory("Default")
+        .expect("Default profile found");
+
+    let serialized = serde_json::to_string(profile).expect("serialize profile to json");
+    let json_val: serde_json::Value =
+        serde_json::from_str(&serialized).expect("parse serialized json");
+    assert_eq!(
+        json_val.get("account_email"),
+        Some(&serde_json::Value::String("person@example.com".to_string()))
+    );
+
+    let round_tripped: BrowserProfile =
+        serde_json::from_str(&serialized).expect("deserialize round trip");
+    assert_eq!(&round_tripped, profile);
+    assert_eq!(
+        round_tripped.account_email,
+        Some("person@example.com".to_string())
+    );
 }

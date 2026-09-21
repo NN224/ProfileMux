@@ -1,13 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 
-use crate::domain::DeleteMode;
 use crate::tui::app::App;
-use crate::tui::dialogs::{
-    expand_tilde, BrowserRunningDialog, ConfirmButton, ConfirmationDialog, DeleteInfo, Dialog,
-    DoctorDialog, ErrorDialog, PendingAction, QuitWaitState, TextInputDialog, TextInputKind,
-};
-use crate::tui::form::{FormField, ProfileForm};
-use crate::tui::keymap::{map_key, Action};
+use crate::tui::keymap::map_key;
+
+#[path = "events_actions.rs"]
+mod events_actions;
+
+#[path = "events_dialogs.rs"]
+mod events_dialogs;
+
+pub use events_actions::check_capability;
+use events_actions::execute_action;
+pub use events_dialogs::{handle_dialog_key, submit_form, submit_text_input};
 
 /// Handles incoming key events and delegates to state updates.
 pub fn handle_key(app: &mut App, key: KeyEvent) {
@@ -39,324 +43,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-pub fn handle_dialog_key(app: &mut App, code: KeyCode) {
-    if code == KeyCode::Esc {
-        app.close_dialog();
-        return;
-    }
-
-    // Take the dialog out while handling so the handlers can also borrow `app`;
-    // it is put back unless the handler closed or replaced it.
-    let Some(mut dialog) = app.active_dialog.take() else {
-        return;
-    };
-
-    match &mut dialog {
-        Dialog::TextInput(d) => handle_text_input_key(app, d, code),
-        Dialog::Form(f) => handle_form_key(app, f, code),
-        Dialog::Confirmation(c) => handle_confirmation_key(app, c, code),
-        Dialog::BrowserRunning(b) => handle_browser_running_key(app, b, code),
-        Dialog::Doctor(d) => match code {
-            KeyCode::Up => d.scroll_up(),
-            KeyCode::Down => d.scroll_down(),
-            KeyCode::PageUp => d.scroll_page_up(),
-            KeyCode::PageDown => d.scroll_page_down(),
-            KeyCode::Enter => app.close_dialog(),
-            _ => {}
-        },
-        Dialog::Error(_) if code == KeyCode::Enter => app.close_dialog(),
-        Dialog::Error(_) => {}
-    }
-
-    if app.active_dialog.is_none() && !app.dialog_consumed {
-        app.active_dialog = Some(dialog);
-    }
-    app.dialog_consumed = false;
-}
-
-fn handle_text_input_key(app: &mut App, d: &mut TextInputDialog, code: KeyCode) {
-    match code {
-        KeyCode::Char(c) => d.handle_char(c),
-        KeyCode::Backspace => d.handle_backspace(),
-        KeyCode::Left => d.focused_button = 0,
-        KeyCode::Right => d.focused_button = 1,
-        KeyCode::Tab => d.focused_button = (d.focused_button + 1) % 2,
-        KeyCode::Enter => submit_text_input(app),
-        _ => {}
-    }
-}
-
-fn submit_text_input(app: &mut App) {
-    let Some(Dialog::TextInput(d)) = app.active_dialog.take() else {
-        return;
-    };
-    if d.focused_button == 1 {
-        return;
-    }
-    match d.kind {
-        TextInputKind::Rename {
-            browser_index,
-            profile,
-        } => {
-            let new_name = d.value.trim().to_string();
-            if !new_name.is_empty() {
-                app.queue_mutation(PendingAction::RenameProfile {
-                    browser_index,
-                    profile,
-                    new_name,
-                });
-            }
-        }
-        TextInputKind::Avatar {
-            browser_index,
-            profile,
-        } => {
-            submit_avatar_input(app, browser_index, profile, d.value.trim());
-        }
-    }
-}
-
-fn submit_avatar_input(
-    app: &mut App,
-    b_idx: usize,
-    profile: crate::domain::BrowserProfile,
-    path_str: &str,
-) {
-    if path_str.is_empty() {
-        return;
-    }
-    let path = expand_tilde(path_str);
-    let Some(browser) = app.browsers.get(b_idx) else {
-        return;
-    };
-    match browser.adapter.plan_set_avatar(&profile, &path) {
-        Ok(plan) => {
-            let action = PendingAction::SetAvatar {
-                browser_index: b_idx,
-                profile,
-                path,
-            };
-            app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
-                "Set Profile Avatar",
-                plan,
-                None,
-                "Set Avatar",
-                action,
-            )));
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Set Avatar Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
-fn handle_form_key(app: &mut App, form: &mut ProfileForm, code: KeyCode) {
-    match code {
-        KeyCode::Tab | KeyCode::Down => form.next_field(),
-        KeyCode::BackTab | KeyCode::Up => form.prev_field(),
-        KeyCode::Left => match form.focused_field {
-            FormField::Template => form.cycle_template_prev(),
-            FormField::Extensions => form.cycle_extensions_prev(),
-            FormField::OpenAfterCreate => form.toggle_open_after_create(),
-            FormField::Buttons => form.focused_button = 0,
-            _ => {}
-        },
-        KeyCode::Right => match form.focused_field {
-            FormField::Template => form.cycle_template_next(),
-            FormField::Extensions => form.cycle_extensions_next(),
-            FormField::OpenAfterCreate => form.toggle_open_after_create(),
-            FormField::Buttons => form.focused_button = 1,
-            _ => {}
-        },
-        KeyCode::Char(c) => match form.focused_field {
-            FormField::Name => form.handle_name_char(c),
-            FormField::Directory => form.handle_directory_char(c),
-            FormField::Avatar => form.handle_avatar_char(c),
-            FormField::OpenAfterCreate if c == ' ' => form.toggle_open_after_create(),
-            _ => {}
-        },
-        KeyCode::Backspace => match form.focused_field {
-            FormField::Name => form.handle_name_backspace(),
-            FormField::Directory => form.handle_directory_backspace(),
-            FormField::Avatar => form.handle_avatar_backspace(),
-            _ => {}
-        },
-        KeyCode::Enter => {
-            if form.focused_field == FormField::Buttons && form.focused_button == 1 {
-                app.close_dialog();
-            } else if form.focused_field == FormField::Buttons
-                || form.focused_field == FormField::OpenAfterCreate
-            {
-                submit_form(app);
-            } else {
-                form.next_field();
-            }
-        }
-        _ => {}
-    }
-}
-
-fn submit_form(app: &mut App) {
-    let Some(Dialog::Form(form)) = app.active_dialog.take() else {
-        return;
-    };
-    let b_idx = app.selected_browser;
-    let Some(browser) = app.browsers.get(b_idx) else {
-        return;
-    };
-
-    if form.is_clone {
-        submit_clone_form(app, b_idx, &form);
-    } else {
-        let spec = form.to_create_spec();
-        match browser.adapter.plan_create(&spec) {
-            Ok(plan) => {
-                let action = PendingAction::CreateProfile {
-                    browser_index: b_idx,
-                    spec,
-                };
-                app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
-                    "Create Profile",
-                    plan,
-                    None,
-                    "Create Profile",
-                    action,
-                )));
-            }
-            Err(e) => {
-                app.open_dialog(Dialog::Error(ErrorDialog {
-                    title: "Create Profile Failed".to_string(),
-                    message: e.to_string(),
-                }));
-            }
-        }
-    }
-}
-
-fn submit_clone_form(app: &mut App, b_idx: usize, form: &ProfileForm) {
-    let Some(browser) = app.browsers.get(b_idx) else {
-        return;
-    };
-    let Some(source) = app.current_profile().cloned() else {
-        return;
-    };
-    let spec = form.to_clone_spec();
-    match browser.adapter.plan_clone(&source, &spec) {
-        Ok(plan) => {
-            let action = PendingAction::CloneProfile {
-                browser_index: b_idx,
-                source_profile: source,
-                spec,
-            };
-            app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
-                "Clone Profile",
-                plan,
-                None,
-                "Clone Profile",
-                action,
-            )));
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Clone Profile Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
-fn handle_confirmation_key(app: &mut App, c: &mut ConfirmationDialog, code: KeyCode) {
-    match code {
-        KeyCode::Up => c.scroll_up(),
-        KeyCode::Down => c.scroll_down(),
-        KeyCode::PageUp => c.scroll_page_up(),
-        KeyCode::PageDown => c.scroll_page_down(),
-        KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
-            c.focused_button = c.focused_button.toggle();
-        }
-        KeyCode::Enter if c.focused_button == ConfirmButton::Safe => app.close_dialog(),
-        KeyCode::Enter => confirm_action(app, c.plan.clone(), c.action.clone()),
-        _ => {}
-    }
-}
-
-fn confirm_action(app: &mut App, plan: crate::domain::OperationPlan, action: PendingAction) {
-    let b_idx = match &action {
-        PendingAction::CreateProfile { browser_index, .. } => *browser_index,
-        PendingAction::CloneProfile { browser_index, .. } => *browser_index,
-        PendingAction::RenameProfile { browser_index, .. } => *browser_index,
-        PendingAction::DeleteProfile { browser_index, .. } => *browser_index,
-        PendingAction::SetAvatar { browser_index, .. } => *browser_index,
-        PendingAction::CleanCache { browser_index, .. } => *browser_index,
-    };
-
-    let is_running = app
-        .browsers
-        .get(b_idx)
-        .map(|b| b.adapter.is_running())
-        .unwrap_or(false);
-
-    if plan.requires_browser_closed && is_running {
-        let name = app
-            .browsers
-            .get(b_idx)
-            .map(|b| b.install.name.clone())
-            .unwrap_or_default();
-        app.open_dialog(Dialog::BrowserRunning(BrowserRunningDialog::new(
-            b_idx, name, action,
-        )));
-    } else {
-        app.queue_mutation(action);
-    }
-}
-
-fn handle_browser_running_key(app: &mut App, b: &mut BrowserRunningDialog, code: KeyCode) {
-    match code {
-        KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
-            b.focused_button = b.focused_button.toggle();
-        }
-        KeyCode::Enter => {
-            if b.focused_button == ConfirmButton::Safe {
-                app.close_dialog();
-            } else {
-                let b_idx = b.browser_index;
-                let b_name = b.browser_name.clone();
-                let action = b.pending_action.clone();
-                request_quit_browser(app, b_idx, b_name, action);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn request_quit_browser(app: &mut App, b_idx: usize, b_name: String, action: PendingAction) {
-    let Some(browser) = app.browsers.get(b_idx) else {
-        app.close_dialog();
-        return;
-    };
-    match browser.adapter.request_quit() {
-        Ok(()) => {
-            app.close_dialog();
-            app.status_message = Some(format!("Waiting for {b_name} to quit..."));
-            app.waiting_for_quit = Some(QuitWaitState {
-                browser_index: b_idx,
-                browser_name: b_name,
-                start_time: std::time::Instant::now(),
-                pending_action: action,
-            });
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Quit Request Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
 fn handle_filter_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc => app.cancel_filter(),
@@ -379,261 +65,23 @@ fn handle_overlay_key(app: &mut App, code: KeyCode) {
     }
 }
 
-fn execute_action(app: &mut App, action: Action) {
-    match action {
-        Action::Quit => app.should_quit = true,
-        Action::FocusNext => app.focus_next(),
-        Action::FocusPrev => app.focus_prev(),
-        Action::FocusLeft => app.focus_left(),
-        Action::FocusRight => app.focus_right(),
-        Action::MoveUp => app.move_up(),
-        Action::MoveDown => app.move_down(),
-        Action::StartSearch => app.start_search(),
-        Action::ToggleHelp => app.toggle_help(),
-        Action::ToggleBrowserDetails => app.toggle_browser_overlay(),
-        Action::ToggleProfileDetails => app.toggle_profile_overlay(),
-        Action::CloseOverlay => {
-            if !app.filter.is_empty() {
-                app.cancel_filter();
-            } else {
-                app.close_overlays();
-            }
-        }
-        Action::Refresh => app.rescan_selected_profile(),
-        Action::OpenFolder => handle_open_folder(app),
-        Action::NewProfile => handle_new_profile(app),
-        Action::CloneProfile => handle_clone_profile(app),
-        Action::RenameProfile => handle_rename_profile(app),
-        Action::DeleteProfile => handle_delete_profile(app),
-        Action::LaunchProfile => handle_launch_profile(app),
-        Action::SetAvatar => handle_set_avatar(app),
-        Action::Doctor => handle_doctor(app),
-        Action::CleanCache => handle_clean_cache(app),
-    }
-}
-
-pub fn check_capability(app: &mut App, cap_name: &str) -> bool {
-    let Some(browser) = app.current_browser() else {
-        app.status_message = Some("No browser selected".to_string());
-        return false;
-    };
-
-    if let Some(reason) = browser.capabilities.reason_disabled(cap_name) {
-        app.status_message = Some(reason.to_string());
-        false
-    } else {
-        true
-    }
-}
-
-fn handle_new_profile(app: &mut App) {
-    if !check_capability(app, "create") {
-        return;
-    }
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let form = ProfileForm::new_create(browser.install.user_data_root.clone(), &browser.profiles);
-    app.open_dialog(Dialog::form(form));
-}
-
-fn handle_clone_profile(app: &mut App) {
-    if !check_capability(app, "clone") {
-        return;
-    }
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to clone".to_string());
-        return;
-    };
-    let form = ProfileForm::new_clone(
-        browser.install.user_data_root.clone(),
-        &browser.profiles,
-        &profile,
-    );
-    app.open_dialog(Dialog::form(form));
-}
-
-fn handle_rename_profile(app: &mut App) {
-    if !check_capability(app, "rename_display_name") {
-        return;
-    }
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to rename".to_string());
-        return;
-    };
-    let dialog = TextInputDialog::new_rename(app.selected_browser, profile);
-    app.open_dialog(Dialog::TextInput(dialog));
-}
-
-fn handle_set_avatar(app: &mut App) {
-    if !check_capability(app, "custom_avatar") {
-        return;
-    }
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to set avatar".to_string());
-        return;
-    };
-    let dialog = TextInputDialog::new_avatar(app.selected_browser, profile);
-    app.open_dialog(Dialog::TextInput(dialog));
-}
-
-fn handle_delete_profile(app: &mut App) {
-    if !check_capability(app, "delete") {
-        return;
-    }
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to delete".to_string());
-        return;
-    };
-    match browser.adapter.plan_delete(&profile, DeleteMode::Trash) {
-        Ok(plan) => {
-            let delete_info = DeleteInfo::from_profile(&profile);
-            let action = PendingAction::DeleteProfile {
-                browser_index: app.selected_browser,
-                profile,
-                mode: DeleteMode::Trash,
-            };
-            app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
-                "Delete Profile",
-                plan,
-                Some(delete_info),
-                "Move to Trash",
-                action,
-            )));
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Delete Plan Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
-fn handle_launch_profile(app: &mut App) {
-    if !check_capability(app, "launch") {
-        return;
-    }
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to launch".to_string());
-        return;
-    };
-    match browser.adapter.launch_profile(&profile) {
-        Ok(()) => {
-            app.status_message = Some(format!("Launched profile '{}'", profile.display_name));
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Launch Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
-fn handle_clean_cache(app: &mut App) {
-    if !check_capability(app, "clean_cache") {
-        return;
-    }
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let Some(profile) = app.current_profile().cloned() else {
-        app.status_message = Some("No profile selected to clean".to_string());
-        return;
-    };
-    match browser.adapter.plan_clean_cache(&profile) {
-        Ok(plan) => {
-            let action = PendingAction::CleanCache {
-                browser_index: app.selected_browser,
-                profile,
-            };
-            app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
-                "Clean Profile Cache",
-                plan,
-                None,
-                "Clean Cache",
-                action,
-            )));
-        }
-        Err(e) => {
-            app.open_dialog(Dialog::Error(ErrorDialog {
-                title: "Clean Cache Plan Failed".to_string(),
-                message: e.to_string(),
-            }));
-        }
-    }
-}
-
-fn handle_doctor(app: &mut App) {
-    let Some(browser) = app.current_browser() else {
-        return;
-    };
-    let findings = browser
-        .adapter
-        .doctor()
-        .unwrap_or_else(|_| browser.doctor_findings.clone());
-    let dialog = DoctorDialog {
-        browser_name: browser.install.name.clone(),
-        findings,
-        scroll: 0,
-    };
-    app.open_dialog(Dialog::Doctor(dialog));
-}
-
-fn handle_open_folder(app: &mut App) {
-    if !check_capability(app, "open_folder") {
-        return;
-    }
-
-    let Some(profile) = app.current_profile() else {
-        app.status_message = Some("Open Folder: no profile selected".to_string());
-        return;
-    };
-
-    #[cfg(target_os = "macos")]
-    {
-        match std::process::Command::new("open")
-            .arg("-R")
-            .arg(&profile.path)
-            .spawn()
-        {
-            Ok(_) => {
-                app.status_message = Some(format!("Revealed {} in Finder", profile.directory));
-            }
-            Err(err) => {
-                app.status_message = Some(format!("Failed to open folder: {err}"));
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = profile;
-        app.status_message = Some("Open Folder: only macOS is supported in this build".to_string());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::browsers::BrowserAdapter;
     use crate::domain::{
         BrowserCapabilities, BrowserInstall, BrowserInstallId, BrowserKind, BrowserProfile,
-        Channel, HealthFinding, OperationKind, OperationPlan, ProfileId, ProfileStoreSnapshot,
-        SupportLevel,
+        Channel, DeleteMode, HealthFinding, OperationKind, OperationPlan, ProfileId,
+        ProfileStoreSnapshot, SupportLevel,
     };
     use crate::error::Result;
-    use crate::tui::app::BrowserItem;
+    use crate::tui::app::{BrowserItem, Focus};
+    use crate::tui::dialogs::{
+        BrowserRunningDialog, ConfirmButton, ConfirmationDialog, Dialog, DoctorDialog, ErrorDialog,
+        PendingAction, TextInputDialog,
+    };
+    use crate::tui::form::ProfileForm;
+    use crate::tui::keymap::Action;
     use std::path::{Path, PathBuf};
 
     struct TestAdapter {
@@ -680,6 +128,21 @@ mod tests {
             path: PathBuf::from("/tmp/test-data/Default"),
             cache_path: None,
             avatar: None,
+            account_email: None,
+            last_active: None,
+            registered: true,
+            directory_exists: true,
+            size: None,
+        };
+        let profile2 = BrowserProfile {
+            id: ProfileId::new(&install.id, "Second Profile"),
+            install_id: install.id.clone(),
+            display_name: "Second Profile".to_string(),
+            directory: "Second Profile".to_string(),
+            path: PathBuf::from("/tmp/test-data/Second Profile"),
+            cache_path: None,
+            avatar: None,
+            account_email: None,
             last_active: None,
             registered: true,
             directory_exists: true,
@@ -693,7 +156,7 @@ mod tests {
             install,
             capabilities: caps,
             is_running: false,
-            profiles: vec![profile],
+            profiles: vec![profile, profile2],
             doctor_findings: Vec::new(),
             adapter,
         };
@@ -809,5 +272,186 @@ mod tests {
         open_dlg(&mut app);
         handle_dialog_key(&mut app, KeyCode::Esc);
         assert!(app.active_dialog.is_none() && app.pending_mutation.is_none());
+    }
+
+    #[test]
+    fn test_regression_enter_on_confirmation_dialog_with_action_button_focused_queues_mutation() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof,
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new("Confirm Delete", plan, None, "Delete", act);
+        dialog.focused_button = ConfirmButton::Action;
+        app.open_dialog(Dialog::confirmation(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Enter);
+
+        assert!(app.active_dialog.is_none());
+        assert!(matches!(
+            app.pending_mutation,
+            Some(PendingAction::DeleteProfile {
+                mode: DeleteMode::Trash,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_enter_affirmative_and_cancel_on_text_input_dialog() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+
+        // 1. Enter with Save (0) button focused queues RenameProfile mutation
+        let mut dialog = TextInputDialog::new_rename(0, prof.clone());
+        dialog.value = "New Display Name".to_string();
+        dialog.focused_button = 0;
+        app.open_dialog(Dialog::TextInput(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none());
+        assert!(matches!(
+            &app.pending_mutation,
+            Some(PendingAction::RenameProfile { new_name, .. }) if new_name == "New Display Name"
+        ));
+        app.pending_mutation = None;
+
+        // 2. Enter with Cancel (1) button focused closes dialog and queues nothing
+        let mut dialog = TextInputDialog::new_rename(0, prof);
+        dialog.value = "Unsaved Name".to_string();
+        dialog.focused_button = 1;
+        app.open_dialog(Dialog::TextInput(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none());
+        assert!(app.pending_mutation.is_none());
+    }
+
+    #[test]
+    fn test_enter_cancel_button_on_confirmation_dialog_queues_nothing() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof,
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", act);
+        dialog.focused_button = ConfirmButton::Safe;
+        app.open_dialog(Dialog::confirmation(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none());
+        assert!(app.pending_mutation.is_none());
+    }
+
+    #[test]
+    fn test_left_and_right_change_selected_button_visible_to_renderer() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+
+        // Confirmation dialog: Left focuses Action, Right focuses Safe
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof.clone(),
+            mode: DeleteMode::Trash,
+        };
+        let dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", act);
+        app.open_dialog(Dialog::confirmation(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Left);
+        assert!(matches!(
+            &app.active_dialog,
+            Some(Dialog::Confirmation(c)) if c.focused_button == ConfirmButton::Action
+        ));
+
+        handle_dialog_key(&mut app, KeyCode::Right);
+        assert!(matches!(
+            &app.active_dialog,
+            Some(Dialog::Confirmation(c)) if c.focused_button == ConfirmButton::Safe
+        ));
+
+        // TextInput dialog: Left focuses 0 (Save), Right focuses 1 (Cancel)
+        let dialog = TextInputDialog::new_rename(0, prof);
+        app.open_dialog(Dialog::TextInput(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Right);
+        assert!(matches!(
+            &app.active_dialog,
+            Some(Dialog::TextInput(d)) if d.focused_button == 1
+        ));
+
+        handle_dialog_key(&mut app, KeyCode::Left);
+        assert!(matches!(
+            &app.active_dialog,
+            Some(Dialog::TextInput(d)) if d.focused_button == 0
+        ));
+    }
+
+    #[test]
+    fn test_space_activates_button_and_inserts_in_text_field() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+
+        // In text input, text field has focus: Space inserts literal space into value
+        let dialog = TextInputDialog::new_rename(0, prof.clone());
+        app.open_dialog(Dialog::TextInput(dialog));
+        handle_dialog_key(&mut app, KeyCode::Char(' '));
+        assert!(app.active_dialog.is_some());
+        assert!(app.pending_mutation.is_none());
+        assert!(matches!(
+            &app.active_dialog,
+            Some(Dialog::TextInput(d)) if d.value == "Default "
+        ));
+
+        // In confirmation dialog, button has focus: Space activates selected button
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof,
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", act);
+        dialog.focused_button = ConfirmButton::Action;
+        app.open_dialog(Dialog::confirmation(dialog));
+
+        handle_dialog_key(&mut app, KeyCode::Char(' '));
+        assert!(app.active_dialog.is_none());
+        assert!(matches!(
+            app.pending_mutation,
+            Some(PendingAction::DeleteProfile { .. })
+        ));
+    }
+
+    #[test]
+    fn test_no_fall_through_to_panes_while_dialog_is_open() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        app.set_focus(Focus::Profiles);
+        assert_eq!(app.selected_profile, 0);
+
+        let prof = app.current_profile().unwrap().clone();
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof,
+            mode: DeleteMode::Trash,
+        };
+        let dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", act);
+        app.open_dialog(Dialog::confirmation(dialog));
+
+        // Down key in profile pane without dialog would move selection to 1.
+        // With dialog open, it must not move selection.
+        let key_down = KeyEvent::new(KeyCode::Down, crossterm::event::KeyModifiers::NONE);
+        handle_key(&mut app, key_down);
+        assert_eq!(app.selected_profile, 0);
+
+        let key_enter = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        handle_key(&mut app, key_enter);
+        assert_eq!(app.selected_profile, 0);
     }
 }

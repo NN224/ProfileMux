@@ -7,7 +7,7 @@ This document defines the browser support matrix, verified test environments, an
 Columns represent operational capabilities:
 - **Detect**: Discovery of application bundle, channel, bundle identifier, and profile root directory.
 - **List**: Enumeration of registered profiles from browser metadata.
-- **Details**: Metadata extraction (display name, avatar information, last active timestamp, path resolution).
+- **Details**: Metadata extraction (display name, avatar information, account email, last active timestamp, path resolution).
 - **Sizes**: Recursive measurement of core profile directory and external caches.
 - **Doctor**: Health analysis for orphan directories, missing folders, duplicate names, and parse errors.
 - **Launch**: Launching the browser using a specific profile via `--user-data-dir` and `--profile-directory`.

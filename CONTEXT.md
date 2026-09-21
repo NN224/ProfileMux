@@ -16,7 +16,7 @@ ProfileMux has completed and shipped version **1.0.0**, the first usable release
 
 ### Implemented and Verified
 - **Discovery**: Locates macOS Chromium application bundles, bundle identifiers, and data roots.
-- **Inspection**: Enumerates profiles from `Local State`, extracts avatars, active timestamps, and registration flags.
+- **Inspection**: Enumerates profiles from `Local State`, extracts avatars, account emails (`user_name`), active timestamps, and registration flags.
 - **Storage Breakdown**: Measures core directory, HTTP cache, code cache, and GPU cache footprint.
 - **Health Doctor**: Analyzes snapshots for missing directories, orphan caches, duplicate profile entries, and metadata syntax errors.
 - **Profile Launching**: Spawns the browser executable with `--user-data-dir` and `--profile-directory`.
@@ -141,7 +141,8 @@ src/
    - Profile deletions move folders to `~/.Trash`. Unrecoverable recursive removal (`rm -rf` / `remove_dir_all`) is strictly forbidden on user profile data.
 
 7. **Privacy Boundary**:
-   - ProfileMux is not a credential extractor, cookie viewer, or history exporter.
-   - It reports names, paths, sizes, and metadata only.
-   - Internal contents of `Cookies`, `Login Data`, `History`, and web storage are never inspected or exposed.
-   - Zero network requests, zero telemetry.
+   - ProfileMux may display the browser profile's own account email, which the browser itself records in its profile metadata (`Local State` under `profile.info_cache.<dir>.user_name`).
+   - It does not read or display passwords, cookies, authentication or session tokens, the contents of browsing history, or the contents of `Login Data`, and it never opens a profile's credential or history databases.
+   - Reports whether sensitive files exist and how large they are, never what is inside them.
+   - Refusing to copy account identity into a cloned profile and displaying an existing profile's account email are separate guarantees; new profiles never inherit signed-in identity.
+   - ProfileMux is not a password extractor, a cookie viewer, or a session-token exporter; it makes zero network calls and collects zero telemetry.

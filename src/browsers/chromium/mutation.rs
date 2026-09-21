@@ -911,6 +911,14 @@ fn build_profile_snapshot(
         .filter(|t| t.is_finite())
         .map(|t| t as i64);
 
+    // Same normalization the snapshot builder applies: only a real value counts.
+    let account_email = entry
+        .get("user_name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     BrowserProfile {
         id: ProfileId::new(&install.id, directory),
         install_id: install.id.clone(),
@@ -919,6 +927,7 @@ fn build_profile_snapshot(
         path,
         cache_path,
         avatar,
+        account_email,
         last_active,
         registered: true,
         directory_exists,

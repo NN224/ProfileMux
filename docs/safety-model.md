@@ -35,6 +35,7 @@ Chromium profile registration and configuration are stored in `<user data root>/
 
 - **Pre-mutation Backup**: Before `Local State` is modified or overwritten, `Transaction::backup_file` copies the original file into the transaction backup area.
 - **Preservation of Unknown Keys**: `Local State` is parsed into a `serde_json::Value` document. ProfileMux modifies only the keys relevant to the target profile (`profile.info_cache.<dir>` and `profile.profiles_order`). All other vendor keys, feature flags, and unknown fields are preserved untouched.
+- **Account Identity Metadata**: Chromium records the profile's primary account identity in `profile.info_cache.<dir>.user_name`. ProfileMux reads this metadata field for display in profile detail views; no credential databases are opened.
 - **Synchronized Registration**: Profile creation, cloning, renaming, and deletion update both `info_cache` and `profiles_order` simultaneously within the transaction.
 
 ## Process State: Running Browser Detection and Graceful Quit
@@ -106,12 +107,18 @@ When cloning a profile or creating a profile from a template, ProfileMux strictl
   - Open tabs and windows (`Sessions`)
   - Web database stores (`Web Data`)
   - Network state cache (`Network Action Predictor`, `Network Persistent State`)
-  - Google Account authentication tokens (`account_info`, `gaia_cookie`)
+  - Account identity and authentication tokens (`account_info`, `gaia_cookie`)
   - HTML5 storage (`Local Storage`, `IndexedDB`, `Service Worker`)
 - **Preference Sanitization**:
   - When `copy_preferences` is enabled, sensitive keys are stripped from `Preferences` before writing to the new profile (`account_info`, `gaia_cookie`, `signin`, `sync`, `google.services`, `password_manager`, `autofill`, etc.).
 - **Extension Signing Warning**:
   - Chromium signs extension entries in `Secure Preferences` with a per-profile MAC. ProfileMux does not forge or calculate these MACs. If extension copying is requested (`copy` or `copy-settings`), the extension files are copied, but Chromium may drop them on next launch. This behavior is documented as experimental.
+
+### Privacy Invariants and Account Identity
+
+ProfileMux may display the browser profile's own account email, which the browser itself records in its profile metadata (`Local State`). It is the profile's own primary account identity only; ProfileMux does not and will not enumerate every account signed into websites inside a profile. ProfileMux does not read or display passwords, cookies, authentication or session tokens, the contents of browsing history, or the contents of `Login Data`, and it never opens a profile's credential or history databases. It reports whether such a file exists and how large it is, never what is inside it. ProfileMux is not a password extractor, a cookie viewer or a session-token exporter; it makes no network calls and collects no telemetry.
+
+Displaying an existing profile's account email and refusing to copy account identity into a new profile are separate guarantees, and both remain true. When a profile is created from a template or cloned, `account_info` and the other GAIA/account keys are stripped from the copied `Preferences`, so a new profile never inherits the template's signed-in identity.
 
 ## Cache Cleanup Boundaries
 

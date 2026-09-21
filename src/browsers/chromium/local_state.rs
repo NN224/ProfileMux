@@ -22,6 +22,8 @@ pub struct ProfileEntry {
     pub is_using_default_name: Option<bool>,
     #[serde(default)]
     pub active_time: Option<f64>,
+    /// The profile's own account identity as recorded in browser metadata.
+    /// ProfileMux never reads credential stores to obtain it.
     #[serde(default)]
     pub user_name: Option<String>,
 }

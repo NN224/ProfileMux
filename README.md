@@ -29,9 +29,10 @@
 >
 > **Privacy Boundary**:
 > - ProfileMux operates strictly at the structural container level.
-> - Reports profile names, paths, sizes, and metadata only.
-> - Never reads, displays, or parses password stores (`Login Data`), session cookies (`Cookies`), browsing histories (`History`), authentication tokens, or web storage.
-> - Reports whether sensitive files exist and their size, never their internal contents.
+> - ProfileMux may display the browser profile's own account email, which the browser itself records in its profile metadata (`Local State`).
+> - Never reads, displays, or parses password stores (`Login Data`), session cookies (`Cookies`), browsing histories (`History`), authentication or session tokens, or web storage.
+> - Never opens a profile's credential or history databases; reports whether sensitive files exist and their size, never their internal contents.
+> - ProfileMux is not a password extractor, a cookie viewer, or a session-token exporter.
 > - Local-first: zero network calls, zero telemetry, zero analytics.
 
 <p align="center">
@@ -73,7 +74,7 @@ Both interfaces share a single core library (`profilemux`), guaranteeing identic
 | Capability | Category | Status | Operational Details |
 | --- | --- | --- | --- |
 | Application Discovery | Discovery | Stable | Locates macOS application bundles, bundle identifiers, release channels, and profile roots |
-| Profile Inspection | Inspection | Stable | Extracts display names, directory names, avatars, timestamps, and registration flags from `Local State` |
+| Profile Inspection | Inspection | Stable | Extracts display names, directory names, avatars, account emails, timestamps, and registration flags from `Local State` |
 | Storage Analysis | Inspection | Stable | Measures core directory, HTTP cache, code cache, and GPU cache footprint |
 | Health Doctor | Diagnostics | Stable | Pure snapshot analysis for missing directories, orphan caches, duplicate IDs, and corrupt metadata |
 | Profile Launching | Lifecycle | Stable | Spawns the browser executable targeting the profile via `--user-data-dir` and `--profile-directory` |
@@ -91,7 +92,7 @@ Both interfaces share a single core library (`profilemux`), guaranteeing identic
 | **Local-first** | Profile data never leaves the machine. No network calls, no telemetry, no account. |
 | **Safety before mutation** | Every structural write is planned, preflighted, executed in a transaction and validated. |
 | **Explicit support** | An operation an adapter cannot prove is safe is disabled and explained, never faked. |
-| **Privacy-aware** | ProfileMux reads structure and size, never the contents of a browser's private stores. |
+| **Privacy-aware** | ProfileMux reads structure, metadata and size, never the contents of a browser's private stores. |
 | **Scriptable** | The TUI and the CLI are two shells over one core library with identical rules. |
 | **Real browser metadata** | ProfileMux reads the browser's own `Local State` and profile directories, not a side database. |
 
@@ -102,7 +103,7 @@ Both interfaces share a single core library (`profilemux`), guaranteeing identic
 ### Profile Management
 
 - Discover installed browsers by macOS bundle identifier, with channel, version and profile count
-- Inspect a profile's display name, directory, absolute path, cache path, avatar and registration state
+- Inspect a profile's display name, directory, absolute path, cache path, avatar, account email and registration state
 - Launch a profile in its own browser
 - Create a profile the browser actually recognises
 - Clone an existing profile under a new identity
@@ -305,7 +306,7 @@ Create a profile from a template:
 Running `pmux` without subcommands opens the interactive three-pane dashboard:
 - **Browsers (Left)**: Discovered installations, release channels, support status, and registered profile counts.
 - **Profiles (Center)**: Profiles for the active browser with display names, directories, and health status indicators.
-- **Details (Right)**: Metadata, process state, storage breakdown, and diagnostic findings.
+- **Details (Right)**: Metadata (including account email), process state, storage breakdown, and diagnostic findings.
 
 ```text
 N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean   H Doctor   / Search   ? Help   Q Quit
@@ -407,6 +408,7 @@ Browser:           Brave Browser (Stable)
 Absolute Path:     /Users/owner/Library/Application Support/BraveSoftware/Brave-Browser/Default
 Cache Path:        /Users/owner/Library/Caches/BraveSoftware/Brave-Browser/Default
 Avatar:            icon: chrome://theme/IDR_PROFILE_AVATAR_26, custom picture: no
+Account Email:     person@example.com
 Last Active:       1726857131
 Registered:        yes
 Directory Exists:  yes
@@ -599,6 +601,8 @@ The following private session and identity stores are excluded from clones:
 - `Top Sites`
 - `Bookmarks` (excluded by default)
 
+Displaying an existing profile's account email and refusing to copy account identity into a new profile are separate guarantees, and both remain true: new profiles never inherit the template's signed-in identity.
+
 ### Preference Sanitization
 
 When copying `Preferences`, sensitive keys are stripped before writing the target file:
@@ -731,11 +735,11 @@ Direct dependencies from `Cargo.toml`:
 ## Privacy Model
 
 ProfileMux operates exclusively at the container management level:
-- Does not inspect or export credentials stored in `Login Data`.
-- Does not inspect or dump session tokens in `Cookies`.
-- Does not read browsing history or search queries in `History`.
+- ProfileMux may display the browser profile's own account email, which the browser itself records in its profile metadata (`Local State`).
+- Does not read or display passwords, cookies, authentication or session tokens, the contents of browsing history, or the contents of `Login Data`.
+- Never opens a profile's credential or history databases; reports whether such a file exists and how large it is, never what is inside it.
 - Does not parse HTML5 local storage or IndexedDB tables.
-- Reports paths, sizes, and operational flags only.
+- ProfileMux is not a password extractor, a cookie viewer, or a session-token exporter.
 - Completely local-first: zero network requests, zero telemetry, zero analytics.
 
 ## Development and Testing

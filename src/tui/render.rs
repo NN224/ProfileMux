@@ -249,6 +249,14 @@ fn detail_line(label: &'static str, val: &str) -> Line<'static> {
     ])
 }
 
+pub fn account_email_display(profile: &BrowserProfile) -> &str {
+    profile.account_email.as_deref().unwrap_or("Not signed in")
+}
+
+pub fn account_email_line(profile: &BrowserProfile) -> Line<'static> {
+    detail_line("Account Email:    ", account_email_display(profile))
+}
+
 fn render_details_pane(frame: &mut Frame, area: Rect, app: &App) {
     let block = pane_block("Details", app.focus == Focus::Details);
 
@@ -305,6 +313,7 @@ fn render_details_pane(frame: &mut Frame, area: Rect, app: &App) {
         detail_line("Absolute Path:    ", &profile.path.display().to_string()),
         detail_line("Cache Path:       ", &cache_str),
         detail_line("Avatar:           ", &avatar_str),
+        account_email_line(profile),
         detail_line("Last Active:      ", &last_active_str),
         detail_line(
             "Registered:       ",
@@ -630,6 +639,7 @@ fn render_profile_overlay(frame: &mut Frame, app: &App) {
         detail_line("Absolute Path:    ", &profile.path.display().to_string()),
         detail_line("Cache Path:       ", &cache_str),
         detail_line("Avatar:           ", &avatar_str),
+        account_email_line(profile),
         detail_line("Last Active:      ", &last_active_str),
         detail_line(
             "Registered:       ",
@@ -655,4 +665,53 @@ fn render_profile_overlay(frame: &mut Frame, app: &App) {
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::domain::{BrowserInstallId, BrowserKind, ProfileId};
+
+    fn make_test_profile(account_email: Option<String>) -> BrowserProfile {
+        let install_id = BrowserInstallId::new(BrowserKind::Chromium, Path::new("/test/browser"));
+        let profile_id = ProfileId::new(&install_id, "Default");
+        BrowserProfile {
+            id: profile_id,
+            install_id,
+            display_name: "Test Profile".to_string(),
+            directory: "Default".to_string(),
+            path: PathBuf::from("/test/browser/Default"),
+            cache_path: None,
+            avatar: None,
+            account_email,
+            last_active: None,
+            registered: true,
+            directory_exists: true,
+            size: None,
+        }
+    }
+
+    #[test]
+    fn test_account_email_display_with_email() {
+        let profile = make_test_profile(Some("person@example.com".to_string()));
+        assert_eq!(account_email_display(&profile), "person@example.com");
+
+        let line = account_email_line(&profile);
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content.as_ref(), "Account Email:    ");
+        assert_eq!(line.spans[1].content.as_ref(), "person@example.com");
+    }
+
+    #[test]
+    fn test_account_email_display_none() {
+        let profile = make_test_profile(None);
+        assert_eq!(account_email_display(&profile), "Not signed in");
+
+        let line = account_email_line(&profile);
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content.as_ref(), "Account Email:    ");
+        assert_eq!(line.spans[1].content.as_ref(), "Not signed in");
+    }
 }

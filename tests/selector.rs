@@ -30,6 +30,7 @@ fn make_profile(install: &BrowserInstall, directory: &str, display_name: &str) -
         path: install.user_data_root.join(directory),
         cache_path: None,
         avatar: None,
+        account_email: None,
         last_active: None,
         registered: true,
         directory_exists: true,

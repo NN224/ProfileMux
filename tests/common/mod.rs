@@ -52,6 +52,28 @@ impl ChromiumFixture {
         self.add_registered_profile_entry(directory, serde_json::Value::Object(entry), create_dir)
     }
 
+    pub fn add_registered_profile_with_user_name(
+        &mut self,
+        directory: &str,
+        display_name: Option<&str>,
+        user_name: Option<&str>,
+    ) -> &mut Self {
+        let mut entry = serde_json::Map::new();
+        if let Some(name) = display_name {
+            entry.insert(
+                "name".to_string(),
+                serde_json::Value::String(name.to_string()),
+            );
+        }
+        if let Some(user) = user_name {
+            entry.insert(
+                "user_name".to_string(),
+                serde_json::Value::String(user.to_string()),
+            );
+        }
+        self.add_registered_profile_entry(directory, serde_json::Value::Object(entry), true)
+    }
+
     pub fn add_registered_profile_entry(
         &mut self,
         directory: &str,

@@ -195,6 +195,7 @@ pub enum ExtensionPolicy {
 Regardless of flags, ProfileMux **always excludes** private session data from clones:
 - `Cookies`, `Login Data`, `History`, `Sessions`, `Web Data`, `Network state`, `Account identity (GAIA)`, `Local Storage`, `Service Worker`, and `Top Sites`.
 - When copying `Preferences`, sensitive keys are stripped out before writing the target file (`account_info`, `gaia_cookie`, `signin`, `sync`, `google.services`, `password_manager`, `autofill`, etc.).
+- Excluding account identity from clones ensures a new profile never inherits the template's signed-in identity, operating independently from the read-only display of an existing profile's `account_email` in detail views.
 
 #### Extension Copying Mechanics and Constraints
 - Default policy is `ExtensionPolicy::None` (no extensions copied).
@@ -236,6 +237,9 @@ ProfileId(format!("{}/{}", install.as_str(), directory))
 - Display names are **never** used as keys or identifiers in internal data structures.
 - Renaming a display name changes only the metadata label; the underlying `ProfileId`, path, and directory remain untouched.
 - Selectors in the CLI accept display names for user convenience, but ambiguous matches are immediately rejected with a list of candidates.
+
+### Account Identity Metadata
+- `account_email`: Optional primary account email on the `BrowserProfile` model, populated from Chromium's `Local State` metadata (`profile.info_cache.<dir>.user_name`). Surfaces the profile's own primary identity in detail views without accessing credential stores.
 
 ## `ProfileStoreSnapshot` and Doctor Engine
 

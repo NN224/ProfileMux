@@ -38,6 +38,7 @@ fn make_profile(
         path,
         cache_path: None,
         avatar: None,
+        account_email: None,
         last_active: None,
         registered: true,
         directory_exists,

@@ -64,6 +64,9 @@ pub struct BrowserProfile {
     /// Absolute path of the profile's cache directory when resolvable.
     pub cache_path: Option<PathBuf>,
     pub avatar: Option<AvatarInfo>,
+    /// The profile's own primary account identity as the browser records it,
+    /// `None` when the profile is not signed in.
+    pub account_email: Option<String>,
     /// Last active time in seconds since the Unix epoch, when reliably available.
     pub last_active: Option<i64>,
     /// True when the browser's own metadata lists this profile.

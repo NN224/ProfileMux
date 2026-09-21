@@ -51,6 +51,12 @@ impl ChromiumAdapter {
         });
 
         let avatar = build_avatar_info(entry);
+        let account_email = entry
+            .user_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         let last_active = entry
             .active_time
             .filter(|t| t.is_finite())
@@ -64,6 +70,7 @@ impl ChromiumAdapter {
             path,
             cache_path,
             avatar,
+            account_email,
             last_active,
             registered: true,
             directory_exists,

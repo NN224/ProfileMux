@@ -6,7 +6,7 @@ use crate::browsers::BrowserAdapter;
 use crate::cli::output;
 use crate::cli::selector;
 use crate::domain::{
-    BrowserInstall, BrowserProfile, ClonePolicy, CloneProfileSpec, CreateProfileSpec,
+    AvatarInfo, BrowserInstall, BrowserProfile, ClonePolicy, CloneProfileSpec, CreateProfileSpec,
     ExtensionPolicy, HealthFinding,
 };
 
@@ -528,69 +528,74 @@ pub fn run_profile_show(args: ProfileShowArgs) -> anyhow::Result<std::process::E
     Ok(std::process::ExitCode::SUCCESS)
 }
 
-fn print_profile_details(install: &BrowserInstall, profile: &BrowserProfile, is_running: bool) {
-    let avatar_str = match &profile.avatar {
+fn format_avatar_info(avatar: Option<&AvatarInfo>) -> String {
+    match avatar {
         Some(av) => format!(
             "icon: {}, custom picture: {}",
             av.icon.as_deref().unwrap_or("none"),
             if av.uses_picture { "yes" } else { "no" }
         ),
         None => "none".to_string(),
-    };
-    let last_active_str = match profile.last_active {
-        Some(ts) => ts.to_string(),
-        None => "never".to_string(),
-    };
-    let cache_str = match &profile.cache_path {
-        Some(p) => p.display().to_string(),
-        None => "-".to_string(),
-    };
-    let breakdown = profile.size.unwrap_or_default();
+    }
+}
 
-    println!("Display Name:      {}", profile.display_name);
-    println!("Directory:         {}", profile.directory);
-    println!("Browser:           {}", install.label());
-    println!("Absolute Path:     {}", profile.path.display());
-    println!("Cache Path:        {cache_str}");
-    println!("Avatar:            {avatar_str}");
-    println!("Last Active:       {last_active_str}");
-    println!(
-        "Registered:        {}",
-        if profile.registered { "yes" } else { "no" }
-    );
-    println!(
-        "Directory Exists:  {}",
-        if profile.directory_exists {
-            "yes"
-        } else {
-            "no"
-        }
-    );
-    println!(
-        "Running:           {}",
-        if is_running { "yes" } else { "no" }
-    );
-    println!("Sizes:");
-    println!(
-        "  Total:           {}",
-        crate::fs::size::format_bytes(breakdown.total)
-    );
-    println!(
-        "  Core:            {}",
-        crate::fs::size::format_bytes(breakdown.core)
-    );
-    println!(
-        "  Cache:           {}",
-        crate::fs::size::format_bytes(breakdown.cache)
-    );
-    println!(
-        "  Code Cache:      {}",
-        crate::fs::size::format_bytes(breakdown.code_cache)
-    );
-    println!(
-        "  GPU Cache:       {}",
-        crate::fs::size::format_bytes(breakdown.gpu_cache)
-    );
+pub fn account_email_display(profile: &BrowserProfile) -> &str {
+    profile.account_email.as_deref().unwrap_or("Not signed in")
+}
+
+pub fn format_profile_details(
+    profile: &BrowserProfile,
+    browser_label: &str,
+    is_running: bool,
+) -> Vec<String> {
+    let avatar_str = format_avatar_info(profile.avatar.as_ref());
+    let last_active_str = profile
+        .last_active
+        .map_or_else(|| "never".to_string(), |ts| ts.to_string());
+    let cache_str = profile
+        .cache_path
+        .as_ref()
+        .map_or_else(|| "-".to_string(), |p| p.display().to_string());
+    let email_str = account_email_display(profile);
+    let reg_str = if profile.registered { "yes" } else { "no" };
+    let dir_str = if profile.directory_exists {
+        "yes"
+    } else {
+        "no"
+    };
+    let run_str = if is_running { "yes" } else { "no" };
+    let breakdown = profile.size.unwrap_or_default();
+    let fmt_bytes = crate::fs::size::format_bytes;
+
+    vec![
+        format!("Display Name:      {}", profile.display_name),
+        format!("Directory:         {}", profile.directory),
+        format!("Browser:           {browser_label}"),
+        format!("Absolute Path:     {}", profile.path.display()),
+        format!("Cache Path:        {cache_str}"),
+        format!("Avatar:            {avatar_str}"),
+        format!("Account Email:     {email_str}"),
+        format!("Last Active:       {last_active_str}"),
+        format!("Registered:        {reg_str}"),
+        format!("Directory Exists:  {dir_str}"),
+        format!("Running:           {run_str}"),
+        "Sizes:".to_string(),
+        format!("  Total:           {}", fmt_bytes(breakdown.total)),
+        format!("  Core:            {}", fmt_bytes(breakdown.core)),
+        format!("  Cache:           {}", fmt_bytes(breakdown.cache)),
+        format!("  Code Cache:      {}", fmt_bytes(breakdown.code_cache)),
+        format!("  GPU Cache:       {}", fmt_bytes(breakdown.gpu_cache)),
+    ]
+}
+
+pub fn build_profile_detail_lines(profile: &BrowserProfile) -> Vec<String> {
+    format_profile_details(profile, "-", false)
+}
+
+fn print_profile_details(install: &BrowserInstall, profile: &BrowserProfile, is_running: bool) {
+    for line in format_profile_details(profile, &install.label(), is_running) {
+        println!("{line}");
+    }
 }
 
 pub fn run_profile_open(args: ProfileOpenArgs) -> anyhow::Result<std::process::ExitCode> {
