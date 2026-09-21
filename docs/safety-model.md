@@ -146,7 +146,7 @@ Cache cleanup **never** removes or alters:
 
 ## Dry-Run Verification
 
-All structural operations (`create`, `clone`, `rename`, `avatar`, `delete`, `clean`) support `--dry-run`.
+The structural operations `create`, `clone`, `rename`, `delete` and `cache clean` support `--dry-run`. `profile avatar` has no `--dry-run` flag; it is still gated by the browser-running preflight and still writes inside a transaction.
 - The adapter computes the entire `OperationPlan`, including affected paths, steps, exclusions, and estimated reclaimed bytes.
 - The plan is rendered to stdout without modifying disk or terminating processes.
 
