@@ -1,5 +1,8 @@
+pub mod clone;
 pub mod discovery;
+pub mod launch;
 pub mod local_state;
+pub mod mutation;
 pub mod profile;
 
 pub use profile::ChromiumAdapter;
