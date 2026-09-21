@@ -1,8 +1,10 @@
 [package]
 name = "profilemux"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
-rust-version = "1.80"
+# Driven by existing dependencies (plist -> time, ratatui -> instability ->
+# darling), not by the updater stack.
+rust-version = "1.88"
 description = "Cross-browser profile manager for power users"
 license = "MIT"
 
@@ -23,8 +25,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 plist = "1"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
+semver = "1"
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
+ureq = { version = "2", default-features = false, features = ["tls", "json", "gzip"] }
 
 [dev-dependencies]
 tempfile = "3"

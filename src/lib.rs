@@ -11,5 +11,6 @@ pub mod error;
 pub mod fs;
 pub mod platform;
 pub mod tui;
+pub mod update;
 
 pub use error::{Error, Result};

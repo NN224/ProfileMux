@@ -32,6 +32,9 @@ pub enum Error {
     #[error("no browser matches `{0}`")]
     NoSuchBrowser(String),
 
+    #[error("update failed: {0}")]
+    Update(String),
+
     #[error("{0}")]
     Other(String),
 }
