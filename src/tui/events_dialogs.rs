@@ -4,6 +4,7 @@ use crate::tui::app::App;
 use crate::tui::dialogs::{
     expand_tilde, BrowserRunningDialog, ConfirmButton, ConfirmationDialog, Dialog, DialogOutcome,
     DoctorDialog, ErrorDialog, PendingAction, QuitWaitState, TextInputDialog, TextInputKind,
+    UpdateDialog,
 };
 use crate::tui::form::{FormField, ProfileForm};
 
@@ -26,6 +27,7 @@ pub fn handle_dialog_key(app: &mut App, code: KeyCode) {
         Dialog::BrowserRunning(b) => handle_browser_running_key(app, b, code),
         Dialog::Doctor(d) => handle_doctor_key(app, d, code),
         Dialog::Error(e) => handle_error_key(app, e, code),
+        Dialog::Update(u) => handle_update_key(app, u, code),
     };
 
     if let Some(d) = retained {
@@ -291,6 +293,11 @@ fn confirm_action(app: &mut App, plan: crate::domain::OperationPlan, action: Pen
         PendingAction::DeleteProfile { browser_index, .. } => *browser_index,
         PendingAction::SetAvatar { browser_index, .. } => *browser_index,
         PendingAction::CleanCache { browser_index, .. } => *browser_index,
+        // An update touches no browser, so no browser preflight applies.
+        PendingAction::InstallUpdate { .. } => {
+            app.queue_mutation(action);
+            return;
+        }
     };
 
     let is_running = app
@@ -391,4 +398,27 @@ fn handle_error_key(app: &mut App, e: ErrorDialog, code: KeyCode) -> Option<Dial
         }
         _ => Some(Dialog::Error(e)),
     }
+}
+
+fn handle_update_key(app: &mut App, mut d: UpdateDialog, code: KeyCode) -> Option<Dialog> {
+    match code {
+        KeyCode::Left => d.focused_button = ConfirmButton::Action,
+        KeyCode::Right => d.focused_button = ConfirmButton::Safe,
+        KeyCode::Tab | KeyCode::BackTab => d.focused_button = d.focused_button.toggle(),
+        KeyCode::Enter | KeyCode::Char(' ') => match d.activate_selected() {
+            DialogOutcome::Activate => {
+                app.queue_mutation(PendingAction::InstallUpdate {
+                    latest: d.latest.clone(),
+                });
+                return None;
+            }
+            DialogOutcome::Close => {
+                app.close_dialog();
+                return None;
+            }
+            DialogOutcome::None => {}
+        },
+        _ => {}
+    }
+    Some(Dialog::Update(d))
 }

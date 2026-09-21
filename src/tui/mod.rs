@@ -5,6 +5,7 @@ pub mod form;
 pub mod keymap;
 pub mod render;
 pub mod sizes;
+pub mod update_check;
 
 use std::io::stdout;
 use std::panic;

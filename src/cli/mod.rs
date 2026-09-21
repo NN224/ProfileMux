@@ -2,6 +2,7 @@ pub mod commands;
 pub mod mutate;
 pub mod output;
 pub mod selector;
+pub mod update_cmd;
 
 use clap::Parser;
 use commands::Cli;

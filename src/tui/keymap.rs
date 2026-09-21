@@ -25,6 +25,7 @@ pub enum Action {
     SetAvatar,
     Doctor,
     CleanCache,
+    Update,
 }
 
 /// Pure case-insensitive subsequence matcher.
@@ -72,6 +73,7 @@ pub fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Esc => Some(Action::CloseOverlay),
         KeyCode::F(5) => Some(Action::Refresh),
         KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::RenameProfile),
+        KeyCode::Char('u') | KeyCode::Char('U') => Some(Action::Update),
         KeyCode::Char('n') | KeyCode::Char('N') => Some(Action::NewProfile),
         KeyCode::Char('c') | KeyCode::Char('C') => Some(Action::CloneProfile),
         KeyCode::Char('d') | KeyCode::Char('D') => Some(Action::DeleteProfile),

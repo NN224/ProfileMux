@@ -1,6 +1,6 @@
 # Safety Model & Shipped Behaviour
 
-ProfileMux treats browser profiles as critical user assets containing irreplaceable data. This document details the shipped safety model, transaction engine, filesystem guards, process state validation, and privacy invariants implemented in ProfileMux 1.0.0.
+ProfileMux treats browser profiles as critical user assets containing irreplaceable data. This document details the shipped safety model, transaction engine, filesystem guards, process state validation, and privacy invariants implemented in ProfileMux 1.1.0.
 
 ## Transactional Architecture and Rollback
 
@@ -156,6 +156,17 @@ Cache cleanup **never** removes or alters:
 The structural operations `create`, `clone`, `rename`, `delete` and `cache clean` support `--dry-run`. `profile avatar` has no `--dry-run` flag; it is still gated by the browser-running preflight and still writes inside a transaction.
 - The adapter computes the entire `OperationPlan`, including affected paths, steps, exclusions, and estimated reclaimed bytes.
 - The plan is rendered to stdout without modifying disk or terminating processes.
+
+## Update Safety
+
+The self-update mechanism (`pmux update`) enforces strict invariants to prevent incomplete installations, downgrades, or binary corruption:
+
+- **Exact Asset Resolution**: The release asset for the host architecture is selected by exact name (`pmux-macos-aarch64` or `pmux-macos-x86_64`) derived from `std::env::consts::ARCH`, never by fuzzy matching. If the expected binary asset or its matching `.sha256` checksum asset is missing or ambiguous, the update halts with an error rather than guessing.
+- **Published Releases Only**: Update discovery queries only published releases; prereleases and drafts are ignored.
+- **Version Guard**: The updater performs semantic version comparison against the running version and refuses to install the same or an older version.
+- **Mandatory Checksum Verification**: The SHA-256 digest of the downloaded binary is verified against the published checksum before installation. Verification cannot be skipped, and any digest mismatch aborts immediately leaving the active binary untouched.
+- **Atomic File Replacement and Rollback**: Installation writes the new binary to a temporary file in the target directory, moves the existing binary aside, renames the new binary into place, and restores the original binary from backup if any step fails. The user can never be left with a missing or truncated `pmux` binary.
+- **Development Build Guard**: A development build running from a build tree (such as under `target/`) refuses to self-update and directs the user to cargo.
 
 ## Out of Scope
 

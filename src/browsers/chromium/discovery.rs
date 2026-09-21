@@ -156,7 +156,7 @@ pub fn dedup_and_sort_installs(
         .fold(BTreeMap::new(), |mut acc, install| {
             let replace = acc
                 .get(&install.id)
-                .map_or(true, |existing| prefers_over(&install, existing));
+                .is_none_or(|existing| prefers_over(&install, existing));
             if replace {
                 acc.insert(install.id.clone(), install);
             }

@@ -36,6 +36,7 @@ pub fn execute_action(app: &mut App, action: Action) {
         Action::LaunchProfile => handle_launch_profile(app),
         Action::SetAvatar => handle_set_avatar(app),
         Action::Doctor => handle_doctor(app),
+        Action::Update => handle_update(app),
         Action::CleanCache => handle_clean_cache(app),
     }
 }
@@ -248,5 +249,21 @@ fn handle_open_folder(app: &mut App) {
     {
         let _ = profile;
         app.status_message = Some("Open Folder: only macOS is supported in this build".to_string());
+    }
+}
+
+/// Opens the update confirmation when a newer release is known, and otherwise
+/// explains in the status line why the action is unavailable.
+fn handle_update(app: &mut App) {
+    match app.update.clone() {
+        Some(crate::tui::update_check::UpdateCheckResult::Available { current, latest }) => {
+            app.open_dialog(Dialog::Update(crate::tui::dialogs::UpdateDialog::new(
+                current, latest,
+            )));
+        }
+        other => {
+            app.status_message =
+                Some(crate::tui::update_check::disabled_reason(other.as_ref()).to_string());
+        }
     }
 }

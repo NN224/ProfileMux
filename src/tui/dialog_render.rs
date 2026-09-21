@@ -41,6 +41,7 @@ pub fn render_dialog(frame: &mut Frame, _app: &App, dialog: &Dialog) {
         Dialog::BrowserRunning(b) => render_browser_running(frame, b),
         Dialog::Doctor(doc) => render_doctor(frame, doc),
         Dialog::Error(err) => render_error(frame, err),
+        Dialog::Update(u) => render_update(frame, u),
     }
 }
 
@@ -445,6 +446,38 @@ fn render_error(frame: &mut Frame, dialog: &ErrorDialog) {
     let b_ok = button_span("OK", true);
     frame.render_widget(
         Paragraph::new(Line::from(vec![b_ok])).alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
+fn render_update(frame: &mut Frame, dialog: &UpdateDialog) {
+    let lines: Vec<Line<'static>> = dialog.lines().into_iter().map(Line::raw).collect();
+    let max_len = lines.iter().map(|l| l.width()).max().unwrap_or(40);
+    let width = compute_dialog_width(max_len, frame.area().width).max(56);
+    let height = compute_dialog_height(lines.len(), frame.area().height).max(10);
+    let area = modal_rect(width, height, frame.area());
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(dialog_block("Update"), area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let visible_h = chunks[0].height as usize;
+    let visible = visible_lines(&lines, 0, visible_h, chunks[0].width as usize);
+    frame.render_widget(
+        Paragraph::new(visible).wrap(Wrap { trim: false }),
+        chunks[0],
+    );
+
+    let b_update = button_span("Update", dialog.focused_button == ConfirmButton::Action);
+    let b_cancel = button_span("Cancel", dialog.focused_button == ConfirmButton::Safe);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![b_update, Span::raw("  "), b_cancel]))
+            .alignment(Alignment::Right),
         chunks[1],
     );
 }

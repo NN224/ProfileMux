@@ -39,6 +39,9 @@ pub enum Command {
 
     /// Diagnose browser installations and profile stores
     Doctor(DoctorArgs),
+
+    /// Update ProfileMux to the latest release
+    Update(UpdateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -302,6 +305,17 @@ pub struct DoctorArgs {
     pub json: bool,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct UpdateArgs {
+    /// Check for updates without downloading or installing
+    #[arg(long)]
+    pub check: bool,
+
+    /// Skip interactive confirmation
+    #[arg(long)]
+    pub yes: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreflightDecision {
     Proceed,
@@ -360,6 +374,7 @@ pub fn execute(command: Command) -> anyhow::Result<std::process::ExitCode> {
             CacheSubcommand::Clean(args) => crate::cli::mutate::run_cache_clean(args),
         },
         Command::Doctor(args) => run_doctor(args),
+        Command::Update(args) => crate::cli::update_cmd::run_update_cmd(args),
     }
 }
 

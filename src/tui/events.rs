@@ -455,3 +455,95 @@ mod tests {
         assert_eq!(app.selected_profile, 0);
     }
 }
+
+#[cfg(test)]
+mod update_action_tests {
+    use super::events_dialogs::handle_dialog_key;
+    use crate::tui::app::App;
+    use crate::tui::dialogs::{ConfirmButton, Dialog, PendingAction};
+    use crate::tui::keymap::Action;
+    use crate::tui::update_check::UpdateCheckResult;
+    use crossterm::event::KeyCode;
+
+    fn app_with(update: Option<UpdateCheckResult>) -> App {
+        let mut app = App::new();
+        app.update = update;
+        app
+    }
+
+    #[test]
+    fn u_without_an_update_explains_and_opens_nothing() {
+        for state in [
+            None,
+            Some(UpdateCheckResult::UpToDate),
+            Some(UpdateCheckResult::Unavailable),
+        ] {
+            let mut app = app_with(state);
+            super::execute_action(&mut app, Action::Update);
+            assert!(app.active_dialog.is_none());
+            assert!(app.pending_mutation.is_none());
+            let msg = app.status_message.clone().unwrap_or_default();
+            assert!(msg.starts_with("Update:"), "unexpected status: {msg}");
+        }
+    }
+
+    #[test]
+    fn u_with_an_update_opens_the_dialog_focused_on_cancel() {
+        let mut app = app_with(Some(UpdateCheckResult::Available {
+            current: "1.1.0".to_string(),
+            latest: "1.2.0".to_string(),
+        }));
+        super::execute_action(&mut app, Action::Update);
+        match &app.active_dialog {
+            Some(Dialog::Update(d)) => {
+                assert_eq!(d.focused_button, ConfirmButton::Safe);
+                assert_eq!(d.current, "1.1.0");
+                assert_eq!(d.latest, "1.2.0");
+                let body = d.lines().join("\n");
+                assert!(body.contains("1.1.0") && body.contains("1.2.0"));
+            }
+            _ => panic!("expected the update dialog"),
+        }
+        assert!(app.pending_mutation.is_none());
+    }
+
+    #[test]
+    fn enter_on_cancel_closes_without_updating() {
+        let mut app = app_with(Some(UpdateCheckResult::Available {
+            current: "1.1.0".to_string(),
+            latest: "1.2.0".to_string(),
+        }));
+        super::execute_action(&mut app, Action::Update);
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none());
+        assert!(app.pending_mutation.is_none());
+    }
+
+    #[test]
+    fn enter_on_update_queues_the_install() {
+        let mut app = app_with(Some(UpdateCheckResult::Available {
+            current: "1.1.0".to_string(),
+            latest: "1.2.0".to_string(),
+        }));
+        super::execute_action(&mut app, Action::Update);
+        handle_dialog_key(&mut app, KeyCode::Left);
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none());
+        match &app.pending_mutation {
+            Some(PendingAction::InstallUpdate { latest }) => assert_eq!(latest, "1.2.0"),
+            _ => panic!("expected a queued install"),
+        }
+    }
+
+    #[test]
+    fn esc_closes_without_updating() {
+        let mut app = app_with(Some(UpdateCheckResult::Available {
+            current: "1.1.0".to_string(),
+            latest: "1.2.0".to_string(),
+        }));
+        super::execute_action(&mut app, Action::Update);
+        handle_dialog_key(&mut app, KeyCode::Esc);
+        assert!(app.active_dialog.is_none());
+        assert!(app.pending_mutation.is_none());
+    }
+}

@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::domain::{BrowserProfile, HealthFinding, Severity, SupportLevel};
 use crate::tui::app::{App, Focus};
+use crate::tui::update_check::UpdateCheckResult;
 
 /// Main render entry point.
 pub fn render(frame: &mut Frame, app: &App) {
@@ -382,6 +383,27 @@ fn render_status_line(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::LightRed),
         )]);
         frame.render_widget(Paragraph::new(line), area);
+    } else {
+        frame.render_widget(Paragraph::new(update_status_line(app, area.width)), area);
+    }
+}
+
+/// Version plus, when a newer release exists, a restrained availability marker
+/// in the accent colour already used for focus.
+fn update_status_line(app: &App, width: u16) -> Line<'static> {
+    let version = env!("CARGO_PKG_VERSION");
+    let base = format!("ProfileMux v{version}");
+    match &app.update {
+        Some(UpdateCheckResult::Available { latest, .. }) if width >= 80 => Line::from(vec![
+            Span::styled(base, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("   \u{2191} v{latest} available"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        _ => Line::from(Span::styled(base, Style::default().fg(Color::DarkGray))),
     }
 }
 
@@ -406,6 +428,11 @@ fn render_action_bar(frame: &mut Frame, area: Rect, app: &App) {
         ("O", "Folder", caps.map(|c| c.open_folder).unwrap_or(false)),
         ("X", "Clean", caps.map(|c| c.clean_cache).unwrap_or(false)),
         ("H", "Doctor", true),
+        (
+            "U",
+            "Update",
+            app.update.as_ref().is_some_and(|u| u.is_available()),
+        ),
         ("/", "Search", true),
         ("?", "Help", true),
         ("Q", "Quit", true),
@@ -496,6 +523,7 @@ fn render_help_overlay(frame: &mut Frame) {
         detail_line("O:               ", "Open profile folder in Finder"),
         detail_line("X:               ", "Clean cache"),
         detail_line("H:               ", "Doctor health findings"),
+        detail_line("U:               ", "Install an available update"),
         detail_line("?:               ", "Toggle this help overlay"),
         detail_line("q / Ctrl-C:      ", "Quit pmux"),
     ];

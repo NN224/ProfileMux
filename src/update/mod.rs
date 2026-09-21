@@ -75,3 +75,57 @@ pub fn check_update(source: &dyn ReleaseSource, current: &Version) -> Result<Upd
     let release = source.latest_release()?;
     Ok(compare(current, &release.version))
 }
+
+/// Downloads, verifies and installs the latest release, without printing
+/// anything. The TUI calls this because it runs inside an alternate screen
+/// where stray output would corrupt the display; the CLI has its own variant
+/// that reports progress.
+///
+/// Returns the version that was installed. Checksum verification is mandatory:
+/// a mismatch aborts before the running binary is touched.
+pub fn install_latest_with(
+    source: &dyn ReleaseSource,
+    exe: &std::path::Path,
+    arch: &str,
+    current: &Version,
+) -> Result<Version> {
+    if classify_install(exe) == InstallKind::Development {
+        return Err(Error::Update(
+            "this is a development build; use cargo build or cargo install instead".to_string(),
+        ));
+    }
+
+    let release = source.latest_release()?;
+    let latest = match compare(current, &release.version) {
+        UpdateStatus::UpToDate { .. } => {
+            return Err(Error::Update("already up to date".to_string()))
+        }
+        UpdateStatus::Available { latest, .. } => latest,
+    };
+
+    let binary_asset = select_asset(&release.assets, arch)?;
+    let checksum_name = checksum_asset_name(&binary_asset.name);
+    let checksum_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == checksum_name)
+        .ok_or_else(|| Error::Update(format!("release has no checksum asset `{checksum_name}`")))?;
+
+    let binary = source.download(binary_asset)?;
+    let checksum = source.download(checksum_asset)?;
+    let expected = String::from_utf8_lossy(&checksum).to_string();
+    verify_sha256(&binary, &expected)?;
+
+    install_binary(&binary, exe)?;
+    Ok(latest)
+}
+
+/// Convenience wrapper resolving the running executable, this machine's
+/// architecture and the public GitHub release source.
+pub fn install_latest() -> Result<Version> {
+    let exe = std::env::current_exe()
+        .map_err(|e| Error::Update(format!("cannot resolve the running executable: {e}")))?;
+    let current = current_version()?;
+    let source = GithubReleaseSource::new(RELEASE_OWNER, RELEASE_REPO);
+    install_latest_with(&source, &exe, std::env::consts::ARCH, &current)
+}

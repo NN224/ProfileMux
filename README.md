@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NN224/ProfileMux"><img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" alt="Version 1.0.0"></a>
-  <img src="https://img.shields.io/badge/rust-1.80+-orange?style=flat-square" alt="Rust 1.80+">
+  <a href="https://github.com/NN224/ProfileMux"><img src="https://img.shields.io/badge/version-1.1.0-blue?style=flat-square" alt="Version 1.1.0"></a>
+  <img src="https://img.shields.io/badge/rust-1.88+-orange?style=flat-square" alt="Rust 1.88+">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="macOS">
   <img src="https://img.shields.io/badge/tui-Ratatui%200.29-blueviolet?style=flat-square" alt="Ratatui 0.29">
-  <img src="https://img.shields.io/badge/tests-116%20passing-brightgreen?style=flat-square" alt="116 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-174%20passing-brightgreen?style=flat-square" alt="174 Tests Passing">
   <img src="https://img.shields.io/badge/status-stable-success?style=flat-square" alt="Status: Stable">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/architecture-local--first-informational?style=flat-square" alt="Local-First">
@@ -51,6 +51,7 @@
 - [Browser Support Matrix](#browser-support-matrix)
 - [Safety Model and Invariants](#safety-model-and-invariants)
 - [Installation and Building](#installation-and-building)
+- [Updating](#updating)
 - [Getting Started](#getting-started)
 - [Terminal User Interface](#terminal-user-interface)
 - [Command-Line Interface](#command-line-interface)
@@ -248,7 +249,18 @@ Chromium maintains profile registration in `<user data root>/Local State`:
 
 ## Installation and Building
 
-Building ProfileMux requires Rust 1.80 or later on macOS.
+Building ProfileMux requires Rust 1.88 or later on macOS.
+
+### Release Binary
+
+Download the matching binary for your architecture (`pmux-macos-aarch64` or `pmux-macos-x86_64`) from [GitHub Releases](https://github.com/NN224/ProfileMux/releases), make it executable, and move it to a directory in your `PATH` (such as `~/.cargo/bin` or `/usr/local/bin`):
+
+```bash
+chmod +x pmux-macos-aarch64
+mv pmux-macos-aarch64 ~/.cargo/bin/pmux
+```
+
+Installing a release binary downloaded from GitHub Releases is what ProfileMux's built-in self-update maintains.
 
 ### Install from Source
 
@@ -266,7 +278,7 @@ cargo build --release
 cp target/release/pmux /usr/local/bin/
 ```
 
-There is no Homebrew formula and no pre-built release binary.
+There is no Homebrew formula. Note that running `cargo install --path .` or building locally creates a cargo-managed or development binary rather than a release binary from GitHub; a later `cargo install` overwrites a self-updated binary in `~/.cargo/bin`.
 
 ### Uninstall
 
@@ -277,6 +289,20 @@ cargo uninstall profilemux
 # or remove the binary directly:
 rm -f ~/.cargo/bin/pmux /usr/local/bin/pmux
 ```
+
+## Updating
+
+```bash
+pmux update --check
+pmux update
+```
+
+- ProfileMux reads the latest published release from GitHub Releases.
+- Nothing is ever installed silently: `pmux update` always asks first and `--check` never modifies anything.
+- Every downloaded binary is verified against its published SHA-256 before installation and a mismatch aborts leaving the current binary untouched.
+- A restart is required after updating.
+
+A development build under `target/` refuses to self-update and directs the user to cargo.
 
 ## Getting Started
 
@@ -308,6 +334,8 @@ Running `pmux` without subcommands opens the interactive three-pane dashboard:
 - **Profiles (Center)**: Profiles for the active browser with display names, directories, and health status indicators.
 - **Details (Right)**: Metadata (including account email), process state, storage breakdown, and diagnostic findings.
 
+A non-blocking status-bar indicator notifies when a newer ProfileMux release is available.
+
 ```text
 N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean   H Doctor   / Search   ? Help   Q Quit
 ```
@@ -334,6 +362,7 @@ N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean
 | `O` | Reveal profile folder in Finder |
 | `X` | Open Clean Cache confirmation dialog |
 | `H` | Open Doctor health findings overlay |
+| `U` | Check for updates / open update dialog |
 | `/` | Filter profiles by fuzzy subsequence matching |
 | `Esc` | Clear active filter / close modal dialog or overlay |
 | `?` | Toggle keybinding help overlay |
@@ -740,6 +769,7 @@ ProfileMux operates exclusively at the container management level:
 - Never opens a profile's credential or history databases; reports whether such a file exists and how large it is, never what is inside it.
 - Does not parse HTML5 local storage or IndexedDB tables.
 - ProfileMux is not a password extractor, a cookie viewer, or a session-token exporter.
+- An update check sends only the request needed to read a public GitHub release, contains no profile names, account emails, paths or machine identifiers, and there is no telemetry.
 - Completely local-first: zero network requests, zero telemetry, zero analytics.
 
 ## Development and Testing
@@ -759,7 +789,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-The suite is **116 passing tests** plus 5 that are `#[ignore]`d because they drive
+The suite is **174 passing tests** plus 5 that are `#[ignore]`d because they drive
 real browsers. Those live tests point each real browser binary at an isolated
 temporary user data root through Chromium's own `--user-data-dir` override:
 

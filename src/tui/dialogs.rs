@@ -230,6 +230,8 @@ pub enum PendingAction {
         browser_index: usize,
         profile: BrowserProfile,
     },
+    /// Download, verify and install the named release.
+    InstallUpdate { latest: String },
 }
 
 /// Default page scroll step for modal dialogs.
@@ -376,6 +378,44 @@ pub struct QuitWaitState {
     pub pending_action: PendingAction,
 }
 
+/// Confirmation shown before downloading and installing a new release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateDialog {
+    pub current: String,
+    pub latest: String,
+    pub focused_button: ConfirmButton,
+}
+
+impl UpdateDialog {
+    pub fn new(current: impl Into<String>, latest: impl Into<String>) -> Self {
+        UpdateDialog {
+            current: current.into(),
+            latest: latest.into(),
+            // The safe button is focused first, as in every other dialog.
+            focused_button: ConfirmButton::Safe,
+        }
+    }
+
+    pub fn activate_selected(&self) -> DialogOutcome {
+        match self.focused_button {
+            ConfirmButton::Action => DialogOutcome::Activate,
+            ConfirmButton::Safe => DialogOutcome::Close,
+        }
+    }
+
+    /// Body lines, in the same shape the other dialogs hand to the renderer.
+    pub fn lines(&self) -> Vec<String> {
+        vec![
+            "ProfileMux update".to_string(),
+            String::new(),
+            format!("Current: {}", self.current),
+            format!("Latest:  {}", self.latest),
+            String::new(),
+            "Download and install this update?".to_string(),
+        ]
+    }
+}
+
 /// The active modal dialog currently being displayed.
 pub enum Dialog {
     TextInput(TextInputDialog),
@@ -386,6 +426,7 @@ pub enum Dialog {
     BrowserRunning(BrowserRunningDialog),
     Doctor(DoctorDialog),
     Error(ErrorDialog),
+    Update(UpdateDialog),
 }
 
 impl Dialog {
@@ -419,6 +460,7 @@ impl Dialog {
             Dialog::BrowserRunning(b) => b.activate_selected(),
             Dialog::Doctor(d) => d.activate_selected(),
             Dialog::Error(e) => e.activate_selected(),
+            Dialog::Update(u) => u.activate_selected(),
         }
     }
 }

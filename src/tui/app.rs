@@ -7,6 +7,7 @@ use crate::domain::{
 use crate::tui::dialogs::{Dialog, ErrorDialog, PendingAction, QuitWaitState};
 use crate::tui::keymap::fuzzy_match;
 use crate::tui::sizes::{ScanRequest, SizeScanner};
+use crate::tui::update_check::{UpdateCheckResult, UpdateChecker};
 
 /// The three interactive panes in ProfileMux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,9 @@ pub struct App {
     /// Set when a key handler deliberately dismissed the active dialog, so the
     /// dialog router does not put it back.
     pub dialog_consumed: bool,
+    /// Background release check. `None` until a result arrives.
+    pub update: Option<UpdateCheckResult>,
+    update_checker: UpdateChecker,
 }
 
 impl App {
@@ -135,6 +139,8 @@ impl App {
             pending_mutation: None,
             waiting_for_quit: None,
             dialog_consumed: false,
+            update: None,
+            update_checker: UpdateChecker::spawn(),
         }
     }
 
@@ -363,8 +369,20 @@ impl App {
         self.pending_mutation = Some(action);
     }
 
+    /// Starts a fresh update check, for the explicit refresh path.
+    pub fn recheck_update(&mut self) {
+        self.update = None;
+        self.update_checker = UpdateChecker::spawn();
+    }
+
     /// Periodic tick handler updating browser quit wait timeouts.
     pub fn tick(&mut self) {
+        if self.update.is_none() {
+            if let Some(result) = self.update_checker.poll() {
+                self.update = Some(result);
+            }
+        }
+
         if let Some(wait) = self.waiting_for_quit.take() {
             let is_running = self
                 .browsers
@@ -442,6 +460,27 @@ impl App {
                 browser_index,
                 profile,
             } => self.execute_clean_cache(browser_index, profile),
+            PendingAction::InstallUpdate { latest } => self.execute_update(latest),
+        }
+    }
+
+    /// Downloads, checksum-verifies and installs the latest release. Runs on the
+    /// main thread after a `Working...` frame, like the other mutations.
+    fn execute_update(&mut self, latest: String) {
+        match crate::update::install_latest() {
+            Ok(installed) => {
+                self.update = Some(crate::tui::update_check::UpdateCheckResult::UpToDate);
+                self.status_message = Some(format!(
+                    "Updated to {installed}. Restart ProfileMux to use the new version."
+                ));
+            }
+            Err(err) => {
+                self.status_message = None;
+                self.open_dialog(Dialog::Error(ErrorDialog {
+                    title: format!("Update to {latest} failed"),
+                    message: err.to_string(),
+                }));
+            }
         }
     }
 
