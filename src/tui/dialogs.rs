@@ -1,17 +1,17 @@
 use std::path::PathBuf;
 
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::domain::{
     BrowserProfile, CloneProfileSpec, CreateProfileSpec, DeleteMode, HealthFinding, OperationPlan,
-    Severity,
 };
-use crate::tui::app::App;
-use crate::tui::form::{FormField, ProfileForm};
+use crate::tui::form::ProfileForm;
+
+#[path = "dialog_render.rs"]
+mod dialog_render;
+
+pub use dialog_render::{button_span, dialog_block, modal_rect, render_dialog};
 
 /// Expands a leading tilde in a filesystem path using the HOME environment variable.
 pub fn expand_tilde(path: &str) -> PathBuf {
@@ -112,35 +112,72 @@ impl ConfirmButton {
 }
 
 /// Profile storage metrics formatted specifically for the deletion confirmation modal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeleteInfo {
     pub profile_name: String,
     pub directory: String,
     pub profile_data_size: String,
     pub cache_size: String,
     pub total_size: String,
+    pub core_bytes: Option<u64>,
+    pub cache_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
 }
 
 impl DeleteInfo {
     pub fn from_profile(profile: &BrowserProfile) -> Self {
-        let (total, core, cache) = match profile.size {
+        let (total_bytes, core_bytes, cache_bytes) = match profile.size {
             Some(s) => (
-                crate::fs::size::format_bytes(s.total),
-                crate::fs::size::format_bytes(s.core),
-                crate::fs::size::format_bytes(s.cache + s.code_cache + s.gpu_cache),
+                Some(s.total),
+                Some(s.core),
+                Some(
+                    s.cache
+                        .saturating_add(s.code_cache)
+                        .saturating_add(s.gpu_cache),
+                ),
             ),
-            None => (
-                "not measured".to_string(),
-                "not measured".to_string(),
-                "not measured".to_string(),
-            ),
+            None => (None, None, None),
         };
+        let total = total_bytes
+            .map(crate::fs::size::format_bytes)
+            .unwrap_or_else(|| "not measured".to_string());
+        let core = core_bytes
+            .map(crate::fs::size::format_bytes)
+            .unwrap_or_else(|| "not measured".to_string());
+        let cache = cache_bytes
+            .map(crate::fs::size::format_bytes)
+            .unwrap_or_else(|| "not measured".to_string());
         Self {
             profile_name: profile.display_name.clone(),
             directory: profile.directory.clone(),
             profile_data_size: core,
             cache_size: cache,
             total_size: total,
+            core_bytes,
+            cache_bytes,
+            total_bytes,
+        }
+    }
+
+    pub fn with_sizes(
+        profile_name: impl Into<String>,
+        directory: impl Into<String>,
+        core: Option<u64>,
+        cache: Option<u64>,
+        total: Option<u64>,
+    ) -> Self {
+        let profile_data_size = core.map(crate::fs::size::format_bytes).unwrap_or_default();
+        let cache_size = cache.map(crate::fs::size::format_bytes).unwrap_or_default();
+        let total_size = total.map(crate::fs::size::format_bytes).unwrap_or_default();
+        Self {
+            profile_name: profile_name.into(),
+            directory: directory.into(),
+            profile_data_size,
+            cache_size,
+            total_size,
+            core_bytes: core,
+            cache_bytes: cache,
+            total_bytes: total,
         }
     }
 }
@@ -188,6 +225,7 @@ pub struct ConfirmationDialog {
     pub cancel_button_label: String,
     pub focused_button: ConfirmButton,
     pub action: PendingAction,
+    pub scroll: usize,
 }
 
 impl ConfirmationDialog {
@@ -206,7 +244,16 @@ impl ConfirmationDialog {
             cancel_button_label: "Cancel".to_string(),
             focused_button: ConfirmButton::Safe, // Safe Cancel focused by default
             action,
+            scroll: 0,
         }
+    }
+
+    pub fn scroll_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(1);
     }
 }
 
@@ -240,6 +287,16 @@ pub struct DoctorDialog {
     pub browser_name: String,
     pub findings: Vec<HealthFinding>,
     pub scroll: usize,
+}
+
+impl DoctorDialog {
+    pub fn scroll_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(1);
+    }
 }
 
 /// Dismissible error dialog.
@@ -281,424 +338,194 @@ impl Dialog {
     }
 }
 
-/// Builds a styled block wrapper for dialog overlays.
-fn dialog_block(title: &str) -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ))
+/// Computes modal dialog height based on content line count, clamped to available height.
+/// Rows a logical line occupies once wrapped to `inner_width`.
+pub fn wrapped_rows(line_width: usize, inner_width: usize) -> usize {
+    if inner_width == 0 {
+        return 1;
+    }
+    line_width.div_ceil(inner_width).max(1)
 }
 
-/// Computes a centered rectangle within the given parent area.
-fn modal_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let w = width.min(area.width.saturating_sub(4));
-    let h = height.min(area.height.saturating_sub(2));
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect::new(x, y, w, h)
+/// Total rows `lines` occupy once wrapped to `inner_width`.
+pub fn wrapped_line_count(lines: &[Line<'static>], inner_width: usize) -> usize {
+    lines
+        .iter()
+        .map(|l| wrapped_rows(l.width(), inner_width))
+        .sum()
 }
 
-/// Renders the active modal dialog centered over the terminal screen.
-pub fn render_dialog(frame: &mut Frame, _app: &App, dialog: &Dialog) {
-    match dialog {
-        Dialog::TextInput(d) => render_text_input(frame, d),
-        Dialog::Form(f) => render_profile_form(frame, f),
-        Dialog::Confirmation(c) => render_confirmation(frame, c),
-        Dialog::BrowserRunning(b) => render_browser_running(frame, b),
-        Dialog::Doctor(doc) => render_doctor(frame, doc),
-        Dialog::Error(err) => render_error(frame, err),
+pub fn compute_dialog_height(content_lines: usize, available_height: u16) -> u16 {
+    let desired = (content_lines as u16).saturating_add(3).max(4);
+    let max_h = available_height.saturating_sub(2);
+    desired.min(max_h)
+}
+
+/// Computes modal dialog width based on maximum line length, clamped to terminal bounds.
+pub fn compute_dialog_width(max_line_len: usize, available_width: u16) -> u16 {
+    let desired = (max_line_len as u16).saturating_add(4).clamp(72, 100);
+    let max_w = available_width.saturating_sub(4);
+    desired.min(max_w)
+}
+
+/// Clamps scroll offset so it cannot exceed available content lines or underflow.
+pub fn clamp_scroll(scroll: usize, total_lines: usize, visible_height: usize) -> usize {
+    if total_lines <= visible_height || visible_height == 0 {
+        0
+    } else {
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        scroll.min(max_scroll)
     }
 }
 
-fn button_span(label: &str, is_focused: bool) -> Span<'static> {
-    if is_focused {
-        Span::styled(
-            format!(" [{label}] "),
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+/// Slices rendered lines according to scroll offset, adding an indicator when more exists.
+/// The slice of `lines` that fits in `visible_height` rows once wrapped to
+/// `inner_width`, with a trailing indicator when content is scrolled out of
+/// view. Wrapping is accounted for so a long path can never push the last line
+/// off the dialog silently.
+pub fn visible_lines(
+    lines: &[Line<'static>],
+    scroll: usize,
+    visible_height: usize,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
+    if visible_height == 0 || lines.is_empty() {
+        return Vec::new();
+    }
+    let total_rows = wrapped_line_count(lines, inner_width);
+    if total_rows <= visible_height {
+        return lines.to_vec();
+    }
+
+    let start = clamp_scroll(scroll, lines.len(), visible_height);
+    let tail = &lines[start..];
+
+    // If everything from here fits, show it without an indicator.
+    if wrapped_line_count(tail, inner_width) <= visible_height {
+        return tail.to_vec();
+    }
+
+    // Otherwise reserve the last row for the indicator.
+    let budget = visible_height.saturating_sub(1);
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for line in tail {
+        let rows = wrapped_rows(line.width(), inner_width);
+        if used + rows > budget {
+            break;
+        }
+        used += rows;
+        out.push(line.clone());
+    }
+    out.push(Line::styled(
+        "  ... more",
+        Style::default().fg(Color::DarkGray),
+    ));
+    out
+}
+
+fn extract_size_str(bytes_opt: Option<u64>, str_val: &str) -> Option<String> {
+    if let Some(b) = bytes_opt {
+        if b > 0 {
+            return Some(crate::fs::size::format_bytes(b));
+        }
+    }
+    if !str_val.is_empty() && str_val != "not measured" && str_val != "0 B" {
+        Some(str_val.to_string())
     } else {
-        Span::styled(format!(" [{label}] "), Style::default().fg(Color::DarkGray))
+        None
     }
 }
 
-fn render_text_input(frame: &mut Frame, dialog: &TextInputDialog) {
-    let area = modal_rect(60, 9, frame.area());
-    frame.render_widget(Clear, area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .margin(1)
-        .split(area);
-
-    let block = dialog_block(&dialog.title);
-    frame.render_widget(block, area);
-
-    frame.render_widget(
-        Paragraph::new(dialog.prompt.as_str()).style(Style::default().add_modifier(Modifier::BOLD)),
-        chunks[0],
-    );
-
-    let input_style = Style::default().fg(Color::Cyan);
-    let val_display = format!("{} ", dialog.value);
-    frame.render_widget(Paragraph::new(val_display).style(input_style), chunks[2]);
-
-    let btn_save = button_span("Save", dialog.focused_button == 0);
-    let btn_cancel = button_span("Cancel", dialog.focused_button == 1);
-    let btn_line = Line::from(vec![btn_save, Span::raw("  "), btn_cancel]);
-    frame.render_widget(
-        Paragraph::new(btn_line).alignment(Alignment::Right),
-        chunks[4],
-    );
-}
-
-fn render_profile_form(frame: &mut Frame, form: &ProfileForm) {
-    let title = if form.is_clone {
-        "Clone Profile"
-    } else {
-        "New Profile"
-    };
-    let area = modal_rect(72, 19, frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(dialog_block(title), area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // 0: Name
-            Constraint::Length(3), // 1: Directory + path
-            Constraint::Length(2), // 2: Template
-            Constraint::Length(2), // 3: Extensions
-            Constraint::Length(2), // 4: Avatar
-            Constraint::Length(2), // 5: Open after create
-            Constraint::Min(1),    // 6: Buttons
-        ])
-        .margin(1)
-        .split(area);
-
-    render_form_fields(frame, form, &chunks);
-
-    let action_label = if form.is_clone {
-        "Clone Profile"
-    } else {
-        "Create Profile"
-    };
-    let is_btn_field = form.focused_field == FormField::Buttons;
-    let b_create = button_span(action_label, is_btn_field && form.focused_button == 0);
-    let b_cancel = button_span("Cancel", is_btn_field && form.focused_button == 1);
-    let buttons = Line::from(vec![b_create, Span::raw("  "), b_cancel]);
-    frame.render_widget(
-        Paragraph::new(buttons).alignment(Alignment::Right),
-        chunks[6],
-    );
-}
-
-fn render_form_fields(frame: &mut Frame, form: &ProfileForm, chunks: &[Rect]) {
-    render_form_top_fields(frame, form, chunks);
-    render_form_bottom_fields(frame, form, chunks);
-}
-
-fn render_form_top_fields(frame: &mut Frame, form: &ProfileForm, chunks: &[Rect]) {
-    let f = form.focused_field;
-    render_field_line(
-        frame,
-        chunks[0],
-        "Name:           ",
-        &form.name,
-        f == FormField::Name,
-    );
-
-    let dir_display = if form.directory.is_empty() {
-        "(auto-suggested from name)"
-    } else {
-        &form.directory
-    };
-    render_field_line(
-        frame,
-        chunks[1],
-        "Directory:      ",
-        dir_display,
-        f == FormField::Directory,
-    );
-    let path_line = Line::from(vec![
-        Span::styled("  → Path:       ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            form.resulting_path().display().to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
-    let path_rect = Rect::new(chunks[1].x, chunks[1].y + 1, chunks[1].width, 1);
-    frame.render_widget(Paragraph::new(path_line), path_rect);
-
-    let template_name = form
-        .template_options
-        .get(form.template_index)
-        .map(|t| t.display_name.as_str())
-        .unwrap_or("None");
-    let t_display = format!("< {template_name} >");
-    render_field_line(
-        frame,
-        chunks[2],
-        "Template:       ",
-        &t_display,
-        f == FormField::Template,
-    );
-}
-
-fn render_form_bottom_fields(frame: &mut Frame, form: &ProfileForm, chunks: &[Rect]) {
-    let f = form.focused_field;
-    let ext_display = format!("< {} >", form.extension_policy.label());
-    render_field_line(
-        frame,
-        chunks[3],
-        "Extensions:     ",
-        &ext_display,
-        f == FormField::Extensions,
-    );
-
-    let av_display = if form.avatar_path.is_empty() {
-        "(optional image path)"
-    } else {
-        &form.avatar_path
-    };
-    render_field_line(
-        frame,
-        chunks[4],
-        "Avatar:         ",
-        av_display,
-        f == FormField::Avatar,
-    );
-
-    let open_str = if form.open_after_create {
-        "[ Yes ]"
-    } else {
-        "[ No ]"
-    };
-    render_field_line(
-        frame,
-        chunks[5],
-        "Open on create: ",
-        open_str,
-        f == FormField::OpenAfterCreate,
-    );
-}
-
-fn render_field_line(
-    frame: &mut Frame,
-    area: Rect,
-    label: &'static str,
-    val: &str,
-    is_focused: bool,
-) {
-    let (lbl_style, val_style) = if is_focused {
-        (
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        (
-            Style::default().add_modifier(Modifier::BOLD),
-            Style::default().fg(Color::Reset),
-        )
-    };
-    let line = Line::from(vec![
-        Span::styled(label, lbl_style),
-        Span::styled(val.to_string(), val_style),
-    ]);
-    frame.render_widget(
-        Paragraph::new(line),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-}
-
-fn build_delete_info_lines(info: &DeleteInfo) -> Vec<Line<'static>> {
-    vec![
-        Line::from(vec![
-            Span::styled("Profile:   ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(info.profile_name.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("Directory: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(info.directory.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("Data Size: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(info.profile_data_size.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("Cache:     ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(info.cache_size.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("Total:     ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(info.total_size.clone()),
-        ]),
-        Line::raw(""),
-    ]
-}
-
-fn render_confirmation(frame: &mut Frame, dialog: &ConfirmationDialog) {
-    let area = modal_rect(72, 18, frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(dialog_block(&dialog.title), area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
-        .margin(1)
-        .split(area);
-
+/// Builds prominent storage breakdown lines for deletion confirmation.
+pub fn build_delete_size_lines(
+    info: Option<&DeleteInfo>,
+    reclaimed_bytes: Option<u64>,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    if let Some(info) = &dialog.delete_info {
-        lines.extend(build_delete_info_lines(info));
+    let core_val = info.and_then(|i| extract_size_str(i.core_bytes, &i.profile_data_size));
+    let cache_val = info.and_then(|i| extract_size_str(i.cache_bytes, &i.cache_size));
+    let total_val = info
+        .and_then(|i| extract_size_str(i.total_bytes, &i.total_size))
+        .or_else(|| reclaimed_bytes.and_then(|b| extract_size_str(Some(b), "")));
+
+    if let Some(c) = core_val {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "    Profile data:  ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(c),
+        ]));
     }
-
-    for l in dialog.plan.lines() {
-        lines.push(Line::raw(l));
+    if let Some(ca) = cache_val {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "    Cache:         ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(ca),
+        ]));
     }
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[0]);
-
-    let b_act = button_span(
-        &dialog.action_button_label,
-        dialog.focused_button == ConfirmButton::Action,
-    );
-    let b_can = button_span(
-        &dialog.cancel_button_label,
-        dialog.focused_button == ConfirmButton::Safe,
-    );
-    let buttons = Line::from(vec![b_act, Span::raw("  "), b_can]);
-    frame.render_widget(
-        Paragraph::new(buttons).alignment(Alignment::Right),
-        chunks[1],
-    );
+    if let Some(t) = total_val {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "    Total:         ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(t),
+        ]));
+    }
+    lines
 }
 
-fn render_browser_running(frame: &mut Frame, dialog: &BrowserRunningDialog) {
-    let area = modal_rect(64, 10, frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(dialog_block("Browser Running"), area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
-        .margin(1)
-        .split(area);
-
-    let msg = vec![
-        Line::raw(format!("{} is currently running.", dialog.browser_name)),
-        Line::raw("This operation requires the browser to be fully closed."),
-        Line::raw("Would you like to ask the browser to quit cleanly?"),
-    ];
-    frame.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }), chunks[0]);
-
-    let b_quit = button_span(
-        "Quit Browser",
-        dialog.focused_button == ConfirmButton::Action,
-    );
-    let b_cancel = button_span("Cancel", dialog.focused_button == ConfirmButton::Safe);
-    let buttons = Line::from(vec![b_quit, Span::raw("  "), b_cancel]);
-    frame.render_widget(
-        Paragraph::new(buttons).alignment(Alignment::Right),
-        chunks[1],
-    );
+/// Formats delete info into formatted lines.
+pub fn build_delete_info_lines(info: &DeleteInfo) -> Vec<Line<'static>> {
+    build_delete_size_lines(Some(info), None)
 }
 
-fn render_doctor(frame: &mut Frame, dialog: &DoctorDialog) {
-    let area = modal_rect(72, 18, frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        dialog_block(&format!("Health Findings — {}", dialog.browser_name)),
-        area,
-    );
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
-        .margin(1)
-        .split(area);
-
+/// Constructs the full rendered body for a confirmation dialog.
+pub fn build_confirmation_lines(dialog: &ConfirmationDialog) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    if dialog.findings.is_empty() {
-        lines.push(Line::raw("No health findings or issues detected."));
+    let plan_lines = dialog.plan.lines();
+    let size_lines = if dialog.plan.kind == crate::domain::OperationKind::DeleteProfile
+        || dialog.delete_info.is_some()
+    {
+        build_delete_size_lines(dialog.delete_info.as_ref(), dialog.plan.reclaimed_bytes)
     } else {
-        for f in &dialog.findings {
-            let color = match f.severity {
-                Severity::Ok => Color::Green,
-                Severity::Warning => Color::Yellow,
-                Severity::Broken => Color::Red,
-            };
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{} ", f.severity.glyph()),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    f.code.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-            ]));
-            lines.push(Line::raw(format!("  {}", f.message)));
-            for path in &f.paths {
-                lines.push(Line::styled(
-                    format!("  {}", path.display()),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            lines.push(Line::raw(""));
+        Vec::new()
+    };
+
+    if size_lines.is_empty() {
+        for l in plan_lines {
+            lines.push(Line::raw(l));
+        }
+        return lines;
+    }
+
+    let steps_pos = plan_lines.iter().position(|l| l == "Steps:");
+    if let Some(pos) = steps_pos {
+        for l in &plan_lines[..pos] {
+            lines.push(Line::raw(l.clone()));
+        }
+        for sl in size_lines {
+            lines.push(sl);
+        }
+        lines.push(Line::raw(""));
+        for l in &plan_lines[pos..] {
+            lines.push(Line::raw(l.clone()));
+        }
+    } else {
+        for l in plan_lines {
+            lines.push(Line::raw(l));
+        }
+        lines.push(Line::raw(""));
+        for sl in size_lines {
+            lines.push(sl);
         }
     }
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[0]);
-
-    let b_close = button_span("Close", true);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![b_close])).alignment(Alignment::Right),
-        chunks[1],
-    );
-}
-
-fn render_error(frame: &mut Frame, dialog: &ErrorDialog) {
-    let area = modal_rect(60, 10, frame.area());
-    frame.render_widget(Clear, area);
-    frame.render_widget(dialog_block(&format!("Error — {}", dialog.title)), area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
-        .margin(1)
-        .split(area);
-
-    let lines = vec![Line::styled(
-        &dialog.message,
-        Style::default().fg(Color::Red),
-    )];
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[0]);
-
-    let b_ok = button_span("OK", true);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![b_ok])).alignment(Alignment::Right),
-        chunks[1],
-    );
+    lines
 }
 
 #[cfg(test)]
@@ -725,6 +552,110 @@ mod tests {
             directory_exists: true,
             size: None,
         }
+    }
+
+    #[test]
+    fn test_computed_dialog_height_grows_with_plan_lines() {
+        let h1 = compute_dialog_height(4, 50);
+        let h2 = compute_dialog_height(10, 50);
+        let h3 = compute_dialog_height(18, 50);
+        assert!(h2 > h1);
+        assert!(h3 > h2);
+    }
+
+    #[test]
+    fn test_computed_dialog_height_clamped_to_small_area() {
+        let small_height = 10;
+        let computed = compute_dialog_height(50, small_height);
+        assert!(computed <= small_height);
+        assert_eq!(computed, 8);
+    }
+
+    #[test]
+    fn test_scroll_offset_clamping() {
+        let total = 12;
+        let visible = 4;
+        assert_eq!(clamp_scroll(0, total, visible), 0);
+        assert_eq!(clamp_scroll(3, total, visible), 3);
+        assert_eq!(clamp_scroll(8, total, visible), 8);
+        assert_eq!(clamp_scroll(9, total, visible), 8);
+        assert_eq!(clamp_scroll(100, total, visible), 8);
+
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Chrome", "Default");
+        let action = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: make_test_profile(),
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", action);
+        assert_eq!(dialog.scroll, 0);
+        dialog.scroll_up();
+        assert_eq!(dialog.scroll, 0);
+        dialog.scroll_down();
+        assert_eq!(dialog.scroll, 1);
+        dialog.scroll_down();
+        assert_eq!(dialog.scroll, 2);
+        dialog.scroll_up();
+        assert_eq!(dialog.scroll, 1);
+    }
+
+    #[test]
+    fn test_visible_lines_slicing_and_indicator() {
+        let lines: Vec<Line<'static>> = (0..8).map(|i| Line::raw(format!("Line {i}"))).collect();
+
+        // Fits completely
+        let vis = visible_lines(&lines, 0, 10, 40);
+        assert_eq!(vis.len(), 8);
+
+        // Does not fit, scroll at start -> shows ... more on last row
+        let vis = visible_lines(&lines, 0, 4, 40);
+        assert_eq!(vis.len(), 4);
+        assert_eq!(vis[0].to_string(), "Line 0");
+        assert_eq!(vis[2].to_string(), "Line 2");
+        assert!(vis[3].to_string().contains("... more"));
+
+        // Scrolled to bottom -> no ... more
+        let vis = visible_lines(&lines, 4, 4, 40);
+        assert_eq!(vis.len(), 4);
+        assert_eq!(vis[0].to_string(), "Line 4");
+        assert_eq!(vis[3].to_string(), "Line 7");
+        assert!(!vis.iter().any(|l| l.to_string().contains("... more")));
+    }
+
+    #[test]
+    fn test_delete_confirmation_body_contains_size_lines() {
+        let mut plan = OperationPlan::new(OperationKind::DeleteProfile, "Chrome", "Default");
+        plan.steps
+            .push(crate::domain::PlanStep::new("Remove profile files"));
+        plan.reclaimed_bytes = Some(3_800_000);
+
+        let delete_info = DeleteInfo::with_sizes(
+            "Default",
+            "Default",
+            Some(1_200_000),
+            Some(2_600_000),
+            Some(3_800_000),
+        );
+
+        let action = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: make_test_profile(),
+            mode: DeleteMode::Trash,
+        };
+        let dialog = ConfirmationDialog::new(
+            "Delete Profile",
+            plan,
+            Some(delete_info),
+            "Move to Trash",
+            action,
+        );
+
+        let body = build_confirmation_lines(&dialog);
+        let body_strs: Vec<String> = body.iter().map(|l| l.to_string()).collect();
+
+        assert!(body_strs.iter().any(|s| s.contains("Profile data:")));
+        assert!(body_strs.iter().any(|s| s.contains("Cache:")));
+        assert!(body_strs.iter().any(|s| s.contains("Total:")));
     }
 
     #[test]

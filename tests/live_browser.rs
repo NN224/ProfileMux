@@ -208,6 +208,35 @@ fn live_cycle(kind: BrowserKind, app_path: &str) -> Option<Vec<String>> {
     );
     log.push("browser launched the profile and kept its registration".to_string());
 
+    // 5. Cache-only cleanup must spare every piece of user data.
+    let marker_files = ["Cookies", "Preferences", "History", "Login Data"];
+    for name in marker_files {
+        if !created.path.join(name).exists() {
+            std::fs::write(created.path.join(name), b"user data").expect("seed marker");
+        }
+    }
+    let refreshed = adapter.snapshot().expect("snapshot before cache clean");
+    let target = refreshed
+        .find_by_directory("PMUX-TEST")
+        .expect("profile present");
+    let plan = adapter.plan_clean_cache(target).expect("plan clean cache");
+    let reclaimed = adapter.clean_cache(target).expect("clean cache");
+    for name in marker_files {
+        assert!(
+            created.path.join(name).exists(),
+            "{name} must survive a cache clean"
+        );
+    }
+    assert!(
+        !created.path.join("Code Cache").exists() && !created.path.join("GPUCache").exists(),
+        "cache directories must be removed"
+    );
+    log.push(format!(
+        "cache clean reclaimed {} (estimate {})",
+        profilemux::fs::size::format_bytes(reclaimed),
+        profilemux::fs::size::format_bytes(plan.reclaimed_bytes.unwrap_or(0))
+    ));
+
     // 5. Rename the display name only.
     adapter
         .rename_display_name(&created, "PMUX TEST RENAMED")

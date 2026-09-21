@@ -1,10 +1,10 @@
 # ProfileMux Architecture
 
-This document describes the architectural layering, identity model, trait boundaries, and diagnostic pipeline of ProfileMux (`pmux`).
+This document describes the architectural layering, mutation execution engine, transactional safety guarantees, identity model, trait boundaries, and diagnostic pipeline of ProfileMux (`pmux`).
 
 ## Layering
 
-ProfileMux enforces strict unidirectional layering. High-level presentation layers delegate entirely to the core library, and no UI or CLI component contains browser-specific filesystem logic.
+ProfileMux enforces strict unidirectional layering. Presentation layers (CLI and TUI) delegate entirely to the core library. No presentation component contains browser-specific filesystem logic, path heuristics, or file parsing routines.
 
 ```text
 ┌────────────────────────────────────────────────────────┐
@@ -25,17 +25,23 @@ ProfileMux enforces strict unidirectional layering. High-level presentation laye
 │  ┌──────────────────────────────────────────────────┐  │
 │  │                   Domain Model                   │  │
 │  │ (BrowserInstall, BrowserProfile, Capabilities,   │  │
-│  │  ProfileStoreSnapshot, HealthFinding, etc.)      │  │
+│  │  OperationPlan, ClonePolicy, ExtensionPolicy)    │  │
 │  └────────────────────────┬─────────────────────────┘  │
 │                           │                            │
 │  ┌────────────────────────▼─────────────────────────┐  │
 │  │                 Browser Adapters                 │  │
-│  │  (BrowserAdapter trait, Chromium, Firefox, etc.) │  │
+│  │  (BrowserAdapter trait, plan_* / execute pairs,  │  │
+│  │   ChromiumAdapter: mutation, clone, avatar, etc) │  │
 │  └────────────────────────┬─────────────────────────┘  │
 │                           │                            │
 │  ┌────────────────────────▼─────────────────────────┐  │
 │  │                   Doctor Engine                  │  │
 │  │     (Pure snapshot analysis, health findings)    │  │
+│  └────────────────────────┬─────────────────────────┘  │
+│                           │                            │
+│  ┌────────────────────────▼─────────────────────────┐  │
+│  │                 Transaction Layer                │  │
+│  │  (Transaction rollback, TrashBin, backup storage)│  │
 │  └──────────────────────────────────────────────────┘  │
 └───────────────────────────┬────────────────────────────┘
                             │
@@ -44,27 +50,31 @@ ProfileMux enforces strict unidirectional layering. High-level presentation laye
 ┌───────────────────────┐       ┌───────────────────────┐
 │     Platform Layer    │       │     Filesystem Layer  │
 │ (macOS bundle lookup, │       │  (Disk size scanning, │
-│  app path resolution) │       │   path normalization) │
+│  app launch, osascript│       │   path normalization, │
+│  singleton lock check)│       │   sanitization)       │
 └───────────────────────┘       └───────────────────────┘
 ```
 
 ### Component Responsibilities
 
-1. **Entry Point (`src/main.rs`)**: Thin executable wrapper delegating directly to `profilemux::cli::run()`.
-2. **CLI Layer (`src/cli/`)**: Command dispatch built using `clap`. Parses arguments and flags, invokes domain operations, and prints formatted human-readable or structured output.
-3. **TUI Layer (`src/tui/`)**: Interactive terminal application built with `ratatui` and `crossterm`. Manages terminal state, renders a three-pane layout, and translates user input events into library calls.
-4. **Domain Layer (`src/domain/`)**: Browser-agnostic data models, identifiers, enums, capability structures, and health findings (`BrowserInstallId`, `ProfileId`, `BrowserInstall`, `BrowserProfile`, `BrowserCapabilities`, `ProfileStoreSnapshot`, `HealthFinding`).
-5. **Adapters Layer (`src/browsers/`)**: Implementations of the `BrowserAdapter` trait that understand browser-specific on-disk layouts, configuration file formats (such as Chromium `Local State`), and process execution.
-6. **Doctor Engine (`src/doctor/`)**: Pure functional health analysis. Consumes an immutable snapshot and returns diagnostic findings without performing I/O.
-7. **Platform & Filesystem Layer (`src/platform/`, `src/fs/`)**: Operating system abstractions (application bundle detection, bundle identifier inspection, cache directory resolution, and recursive disk size measurement).
+1. **Entry Point (`src/main.rs`)**: Executable entry point delegating directly to `profilemux::cli::run()`.
+2. **CLI Layer (`src/cli/`)**: Command parsing and execution using `clap`. Subcommands validate arguments, resolve selectors to concrete profiles, prompt for confirmation when interactive, and invoke library operations.
+3. **TUI Layer (`src/tui/`)**: Fullscreen terminal interface built with `ratatui` and `crossterm`. Manages state across three panes (Browsers, Profiles, Details), renders modal dialogs for all mutations, and handles background disk-usage scans.
+4. **Domain Layer (`src/domain/`)**: Browser-agnostic data models, identifiers, operation plans, cloning specs, and capabilities (`BrowserInstallId`, `ProfileId`, `BrowserInstall`, `BrowserProfile`, `BrowserCapabilities`, `OperationPlan`, `PlanStep`, `ClonePolicy`, `ExtensionPolicy`, `CreateProfileSpec`, `CloneProfileSpec`, `HealthFinding`).
+5. **Adapters Layer (`src/browsers/`)**: Implementations of the `BrowserAdapter` trait handling browser-specific formats (Chromium `Local State`, `Preferences`), process lifecycle, and filesystem operations.
+6. **Doctor Engine (`src/doctor/`)**: Pure functional health analyzer. Consumes an immutable `ProfileStoreSnapshot` and returns diagnostic findings without performing I/O.
+7. **Filesystem & Transaction Layer (`src/fs/`)**: Rollback-capable `Transaction` engine, `TrashBin` abstraction for moving files to macOS Trash, path normalization, directory sanitization, and storage breakdown measurement.
+8. **Platform Layer (`src/platform/`)**: Operating system abstractions for macOS application bundle discovery, executable resolution, process running detection via `SingletonLock` and `/bin/ps`, and AppleScript graceful quit execution.
 
-### Separation Rule
+## The `BrowserAdapter` Trait and Mutation Layer
 
-The TUI and CLI are presentation shells only. Neither contains browser-specific filesystem logic, path heuristics, or file parsing routines. If a browser stores profile metadata in JSON, INI, or SQLite, that detail is encapsulated inside the respective `BrowserAdapter`.
+Every browser family is integrated by implementing the `BrowserAdapter` trait (`src/browsers/mod.rs`).
 
-## The `BrowserAdapter` Trait and Capabilities
+### `plan_*` and Execute Method Pairing
 
-Every browser family is integrated by implementing the `BrowserAdapter` trait (`src/browsers/mod.rs`):
+Mutations are strictly structured as pairs:
+- A `plan_*` method that constructs an `OperationPlan` describing every action without touching disk.
+- An execute method that performs the actual mutation inside a rollback-capable transaction.
 
 ```rust
 pub trait BrowserAdapter {
@@ -76,83 +86,154 @@ pub trait BrowserAdapter {
     }
     fn doctor(&self) -> Result<Vec<HealthFinding>>;
     fn is_running(&self) -> bool;
-
-    // Mutation methods default to returning Error::unsupported(...)
+    fn request_quit(&self) -> Result<()>;
     fn launch_profile(&self, profile: &BrowserProfile) -> Result<()>;
+
+    // Paired mutation methods
+    fn plan_create(&self, spec: &CreateProfileSpec) -> Result<OperationPlan>;
+    fn create_profile(&self, spec: &CreateProfileSpec) -> Result<BrowserProfile>;
+
+    fn plan_clone(&self, source: &BrowserProfile, spec: &CloneProfileSpec) -> Result<OperationPlan>;
+    fn clone_profile(&self, source: &BrowserProfile, spec: &CloneProfileSpec) -> Result<BrowserProfile>;
+
     fn rename_display_name(&self, profile: &BrowserProfile, new_name: &str) -> Result<()>;
+
+    fn plan_rename_directory(&self, profile: &BrowserProfile, new_dir: &str) -> Result<OperationPlan>;
     fn rename_profile_directory(&self, profile: &BrowserProfile, new_dir: &str) -> Result<()>;
-    fn delete_profile(&self, profile: &BrowserProfile) -> Result<()>;
+
+    fn plan_set_avatar(&self, profile: &BrowserProfile, image: &Path) -> Result<OperationPlan>;
+    fn set_avatar(&self, profile: &BrowserProfile, image: &Path) -> Result<()>;
+
+    fn plan_delete(&self, profile: &BrowserProfile, mode: DeleteMode) -> Result<OperationPlan>;
+    fn delete_profile(&self, profile: &BrowserProfile, mode: DeleteMode) -> Result<()>;
+
+    fn plan_clean_cache(&self, profile: &BrowserProfile) -> Result<OperationPlan>;
+    fn clean_cache(&self, profile: &BrowserProfile) -> Result<u64>;
 }
 ```
 
-### Explicit Capabilities
+Both default to returning `Error::Unsupported`, ensuring an adapter only claims operations it has explicitly implemented and validated.
 
-Capabilities are declared explicitly via `BrowserCapabilities` (`src/domain/capability.rs`):
+### `OperationPlan`: Shared Dry-Run and Confirmation Representation
+
+`OperationPlan` (`src/domain/operation.rs`) is the single data structure that backs both CLI `--dry-run` output and TUI modal confirmation dialogs:
 
 ```rust
-pub struct BrowserCapabilities {
-    pub launch: bool,
-    pub open_folder: bool,
-    pub create: bool,
-    pub rename_display_name: bool,
-    pub rename_directory: bool,
-    pub clone: bool,
-    pub delete: bool,
-    pub clean_cache: bool,
-    pub custom_avatar: bool,
-    pub experimental_custom_avatar: bool,
-    pub experimental_rename_directory: bool,
+pub struct OperationPlan {
+    pub kind: OperationKind,
+    pub browser: String,
+    pub profile: String,
+    pub steps: Vec<PlanStep>,
+    pub copies: Vec<String>,
+    pub excludes: Vec<String>,
+    pub paths_affected: Vec<PathBuf>,
+    pub reclaimed_bytes: Option<u64>,
+    pub requires_browser_closed: bool,
 }
 ```
 
-### Why Capabilities Are Explicit
+- The `lines()` method renders the plan into standardized lines of text.
+- In the CLI, passing `--dry-run` displays this text and exits with code 0 without modifying files.
+- In the TUI, this exact same plan text is rendered inside confirmation popups prior to execution.
 
-1. **No Assumed Features**: Different browser engines handle profile isolation, process models, and directory hierarchies differently. For instance, Safari does not use separate profile directories in the way Chromium does; Firefox uses an `ini` profiles registry with arbitrary directory names; Chromium pairs profile folders with an entry in `Local State`.
-2. **Fail Fast and Prevent Invalid Operations**: Rather than discovering at runtime that an operation corrupts state or fails midway through execution, the UI queries `capabilities()` to disable unsupported buttons and options beforehand.
-3. **Safe Defaults**: `BrowserCapabilities::NONE` sets all capabilities to `false`. Adapters opt into capabilities as they are built and verified. In v0.1, the Chromium adapter uses `BrowserCapabilities::READ_ONLY`, which enables only `open_folder` alongside read-only inspection.
-4. **Default Trait Implementations**: Mutation methods on `BrowserAdapter` default to returning `Error::Unsupported { operation, browser }`. An adapter cannot accidentally expose a mutation method it has not explicitly implemented.
+### The `Transaction` Engine with Undo Log and `Drop` Safety Net
+
+Every structural write runs inside a `Transaction` (`src/fs/transaction.rs`).
+The transaction manages a temporary backup directory (`/tmp/pmux-<label>-<pid>-<nanos>-<count>`) and records inverse actions on an internal undo stack:
+
+- `UndoStep::RemovePath(PathBuf)`: Inverse of directory or file creation; deletes the path on rollback.
+- `UndoStep::RestoreFile { original, backup }`: Inverse of modifying an existing file; restores the pre-mutation content from the backup directory.
+- `UndoStep::RenameBack { from, to }`: Inverse of directory or file renaming; moves the item back to its original location.
+
+#### Invariants:
+1. **Atomic Commits**: Calling `tx.commit()` marks the transaction finished and removes the backup directory.
+2. **Reverse Rollback**: Calling `tx.rollback()` iterates through recorded undo steps in reverse order, restoring original files and removing newly created paths, then removes the backup directory.
+3. **`Drop` Safety Net**: If a `Transaction` is dropped while neither committed nor explicitly rolled back (for example, if a function returns early via `?` or a panic occurs), the `Drop` implementation automatically executes the rollback:
+   ```rust
+   impl Drop for Transaction {
+       fn drop(&mut self) {
+           if !self.finished {
+               self.finished = true;
+               let _ = self.apply_rollback();
+           }
+       }
+   }
+   ```
+
+### The `TrashBin` Abstraction
+
+Profile deletions move data to the operating system Trash rather than performing permanent unrecoverable removals (`rm -rf` / `remove_dir_all`):
+
+```rust
+pub trait TrashBin {
+    fn send(&self, path: &Path) -> Result<PathBuf>;
+}
+```
+
+- **`SystemTrash` (`src/fs/trash.rs`)**: Implementation used in production. Resolves `~/.Trash`, handles file name collisions by appending counter increments (`Profile 2`, `Profile 3`), and falls back to a safe copy-then-remove if the user data root crosses a filesystem device boundary (`EXDEV`).
+- **`FakeTrash`**: Test fixture implementation directing trash operations to a temporary directory, ensuring unit and integration tests never pollute the developer's real `~/.Trash`.
+
+### `ClonePolicy` and `ExtensionPolicy`
+
+When creating a profile from a template or cloning an existing profile, ProfileMux enforces an explicit policy rather than copying the source directory wholesale:
+
+```rust
+pub struct ClonePolicy {
+    pub copy_preferences: bool,
+    pub copy_bookmarks: bool,
+    pub extensions: ExtensionPolicy,
+}
+
+pub enum ExtensionPolicy {
+    None,
+    CopyExtensions,
+    CopyExtensionsAndSettings,
+}
+```
+
+#### Private Data Exclusions
+Regardless of flags, ProfileMux **always excludes** private session data from clones:
+- `Cookies`, `Login Data`, `History`, `Sessions`, `Web Data`, `Network state`, `Account identity (GAIA)`, `Local Storage`, `Service Worker`, and `Top Sites`.
+- When copying `Preferences`, sensitive keys are stripped out before writing the target file (`account_info`, `gaia_cookie`, `signin`, `sync`, `google.services`, `password_manager`, `autofill`, etc.).
+
+#### Extension Copying Mechanics and Constraints
+- Default policy is `ExtensionPolicy::None` (no extensions copied).
+- `CopyExtensions`: Copies the `Extensions` directory.
+- `CopyExtensionsAndSettings`: Copies `Extensions`, `Local Extension Settings`, and `Sync Extension Settings`.
+- **Chromium Signature Boundary**: Chromium signs extension registrations in `Secure Preferences` with a per-profile MAC (keyed to profile identity). ProfileMux deliberately does not attempt to forge or recompute these MAC signatures. Consequently, copied extensions may be flagged as modified and dropped by the browser upon next launch. This behavior is documented honestly as experimental.
 
 ## Identity Model
 
-ProfileMux uses strict, stable identifiers that do not depend on human-editable display labels.
+ProfileMux uses strict, stable identifiers that never rely on human-editable display names.
 
 ### `BrowserInstallId`
-
-A browser installation's identity is derived from its `BrowserKind` slug and its canonical, normalized user data root path:
-
+Derived from the browser's kind slug and its canonical, normalized user data root path:
 ```rust
 BrowserInstallId(format!("{}:{}", kind.slug(), user_data_root.display()))
 ```
-
-- Example: `brave:~/Library/Application Support/BraveSoftware/Brave-Browser`
-- **Why**: A user can have multiple release channels (e.g. Brave Stable vs. Brave Beta) or portable browser directories. Deriving the ID from the kind and the verified user data path guarantees uniqueness across installations.
+- Example: `brave:/Users/alice/Library/Application Support/BraveSoftware/Brave-Browser`
+- Ensures release channels (Stable, Beta) and custom roots remain completely distinct.
 
 ### `ProfileId`
-
-A profile's identity is derived from its parent `BrowserInstallId` and its physical on-disk directory name:
-
+Derived from the parent `BrowserInstallId` and the physical on-disk directory name:
 ```rust
 ProfileId(format!("{}/{}", install.as_str(), directory))
 ```
-
-- Example: `brave:~/Library/Application Support/BraveSoftware/Brave-Browser/Default`
-- **Why**: The directory name (such as `Default`, `Profile 1`, `Profile 2`) is the stable anchor on the filesystem where browser data, extensions, and caches are stored.
+- Example: `brave:/Users/alice/Library/Application Support/BraveSoftware/Brave-Browser/Default`
+- Grounded in the stable filesystem folder where profile data resides.
 
 ### Display Names Are Mutable Labels
+- Display names (e.g. "Personal", "Work") are mutable strings stored inside browser metadata (`Local State` under `profile.info_cache.<dir>.name`).
+- Display names are **never** used as keys or identifiers in internal data structures.
+- Renaming a display name changes only the metadata label; the underlying `ProfileId`, path, and directory remain untouched.
+- Selectors in the CLI accept display names for user convenience, but ambiguous matches are immediately rejected with a list of candidates.
 
-Display names (e.g. "Work", "Personal", "Development") are mutable labels stored in browser metadata (such as `Local State` under `profile.info_cache.<dir>.name` in Chromium).
-- **Rule**: Display names are **never** used as keys, identifiers, or selectors in internal data structures.
-- Renaming a profile's display name updates only the metadata label. The underlying `ProfileId`, path, and directory remain unchanged.
-- CLI selectors resolve display names or directories against the snapshot at invocation time, but all internal indexing uses `ProfileId`.
+## `ProfileStoreSnapshot` and Doctor Engine
 
-## `ProfileStoreSnapshot` and the Pure Doctor Engine
-
-Health checks in ProfileMux are designed around an immutable snapshot pattern.
+Health checks in ProfileMux use an immutable snapshot architecture.
 
 ### Single Read-Only Pass
-
-When inspecting a browser installation, the adapter scans the filesystem and configuration once to produce a `ProfileStoreSnapshot` (`src/domain/profile.rs`):
-
+When inspecting an installation, the adapter executes a single read pass over the filesystem and `Local State` to construct a `ProfileStoreSnapshot`:
 ```rust
 pub struct ProfileStoreSnapshot {
     pub registered: Vec<BrowserProfile>,
@@ -162,44 +243,11 @@ pub struct ProfileStoreSnapshot {
 }
 ```
 
-The snapshot captures:
-- All profiles declared in the browser's metadata (`registered`).
-- Directories inside the user data root that look like profiles but are missing from metadata (`unregistered_dirs`).
-- Directories in the cache root that have no corresponding profile directory (`orphan_cache_dirs`).
-- Any syntax or read errors encountered while parsing the metadata file (`parse_error`).
-
-### Doctor as a Pure Function
-
-The `doctor` module (`src/doctor/mod.rs`) takes the `BrowserInstall` and `ProfileStoreSnapshot` as arguments and performs deterministic, pure analysis:
-
+### Pure Doctor Function
+The `doctor` module (`src/doctor/mod.rs`) takes `&BrowserInstall` and `&ProfileStoreSnapshot` and performs pure functional analysis:
 ```rust
 pub fn analyze(install: &BrowserInstall, snapshot: &ProfileStoreSnapshot) -> Vec<HealthFinding>;
 ```
-
-- The doctor performs **no filesystem I/O**, network requests, or system calls.
-- It produces a list of `HealthFinding` items (`src/domain/health.rs`) containing a `Severity` (`Ok`, `Warning`, `Broken`), a machine-readable error code (e.g. `profile-directory-missing`, `orphan-cache-dir`), a descriptive message, and the affected paths.
-- Because it is a pure function, doctor logic can be tested thoroughly with synthetic snapshots without mocking filesystems or creating temporary directories.
-
-## Adding Future Browser Families
-
-ProfileMux's architecture makes adding new browser families modular:
-
-### 1. Adding a Native Browser Family (e.g. Firefox)
-
-To add support for a new browser family such as Firefox:
-1. Ensure the `BrowserKind` enum in `src/domain/browser.rs` includes the relevant variants (e.g. `Firefox`, `FirefoxDeveloper`, `FirefoxNightly`), mapped to `BrowserFamily::Firefox`.
-2. Create a module under `src/browsers/firefox/` that implements:
-   - Installation discovery (locating app bundles and reading `profiles.ini` / `installs.ini`).
-   - Profile enumeration from the configuration file.
-   - Cache directory mapping (e.g. `~/Library/Caches/Firefox/Profiles/<profile>`).
-3. Implement `BrowserAdapter` for `FirefoxAdapter`. Declare supported capabilities via `capabilities()`.
-4. Register the discoverer in `src/browsers/mod.rs::discover_all()`.
-
-No changes to the CLI, TUI, or doctor analysis engine are required.
-
-### 2. User-Defined Browser Definitions (Future)
-
-The separation between `BrowserKind`, `BrowserInstall`, and `BrowserAdapter` creates a clear path for user-defined browser definitions:
-- A user configuration file (e.g. `~/.config/profilemux/browsers.toml`) could declare a browser name, executable path, user data root, cache root, and adapter family (e.g. `family = "chromium"`).
-- At discovery time, ProfileMux would instantiate the existing generic adapter (e.g. `ChromiumAdapter`) with the user-configured paths.
-- Because `BrowserInstallId` and `ProfileId` derive from the paths and kind slugs, custom installations seamlessly integrate into the existing indexing, snapshot, and doctor systems.
+- Performs **no filesystem I/O** and makes no system calls.
+- Inspects snapshot data for missing profile directories, unregistered folders, orphan cache directories, duplicate display names, and metadata corruption.
+- Because it is pure, the doctor engine is thoroughly tested with synthetic snapshots without touching disk.

@@ -1,121 +1,159 @@
-# Safety Model & Mutation Contract
+# Safety Model & Shipped Behaviour
 
-> **IMPORTANT**: ProfileMux v0.1 is strictly **READ-ONLY**. The safety mechanisms, operation lifecycle, rollback strategies, and mutation rules documented here represent the **design contract** for the upcoming mutation engine (planned for v0.2+). None of these mutation operations are shipped or active in v0.1.
+ProfileMux treats browser profiles as critical user assets containing irreplaceable data. This document details the shipped safety model, transaction engine, filesystem guards, process state validation, and privacy invariants implemented in ProfileMux v1.
 
-ProfileMux treats browser profiles as critical user assets containing non-recoverable data (session states, local databases, extension storage). This document outlines the mandatory safety invariant that every future mutation feature must follow.
+## Transactional Architecture and Rollback
 
----
+Every structural write to disk executes inside a `Transaction` (`src/fs/transaction.rs`). A transaction records every mutating step on an in-memory undo stack and provides deterministic rollback if an operation fails or is interrupted.
 
-## The 8-Stage Operation Lifecycle
+### Inverse Action Log
+When an operation begins, ProfileMux establishes a temporary backup folder in the operating system temp directory (`/tmp/pmux-<label>-<pid>-<nanos>-<count>`). As filesystem modifications occur, the transaction pushes corresponding `UndoStep` records:
 
-All profile mutations (creation, renaming, cloning, deletion, cache pruning) must execute through an 8-stage transactional lifecycle:
+- **Path creation** (`create_dir`, `copy_file`, `copy_dir`): Pushes `UndoStep::RemovePath(path)`. Rollback removes the newly created file or directory tree.
+- **File modification** (`write_file`, `backup_file`): Before writing, copies the existing file to the backup directory and pushes `UndoStep::RestoreFile { original, backup }`. Rollback restores the pre-mutation content.
+- **Renaming** (`rename`): Pushes `UndoStep::RenameBack { from, to }`. Rollback moves the renamed item back to its original location.
 
-```text
-┌─────────┐     ┌───────────┐     ┌────────────┐     ┌─────────┐
-│ 1.      │────▶│ 2.        │────▶│ 3.         │────▶│ 4.      │
-│ Inspect │     │ Preflight │     │ Build Plan │     │ Confirm │
-└─────────┘     └───────────┘     └────────────┘     └────┬────┘
-                                                          │
-┌─────────┐     ┌───────────┐     ┌────────────┐     ┌────┴────┐
-│ 8.      │◀────│ 7.        │◀────│ 6.         │◀────│ 5.      │
-│ Commit  │     │ Validate  │     │ Execute    │     │ Backup  │
-└─────────┘     └───────────┘     └────────────┘     └─────────┘
-                      │                 │
-                      ▼                 ▼
-             ┌──────────────────────────────────┐
-             │       Failure -> Rollback        │
-             └──────────────────────────────────┘
+### `Drop` Safety Net
+A transaction must be explicitly completed by calling `tx.commit()`. If execution halts prematurely—due to an error returned via the `?` operator, an unhandled error condition, or a panic—the `Drop` implementation automatically executes the rollback:
+
+```rust
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.finished = true;
+            let _ = self.apply_rollback();
+        }
+    }
+}
 ```
 
-1. **Inspect**:
-   Take an immutable `ProfileStoreSnapshot` of the browser installation. Verify that the target profile and its parent directories exist in a known, parseable state.
-2. **Preflight**:
-   Validate environment preconditions:
-   - Verify the browser is **not running** (`is_running() == false`).
-   - Check filesystem permissions and ensure sufficient disk space is available for operations like cloning.
-   - Verify that target paths do not collide with existing files or directories.
-3. **Build Plan**:
-   Generate an ordered sequence of discrete, reversible filesystem and metadata actions (e.g. `CopyDirectory(src, dst)`, `UpdateMetadataKey(file, key, val)`).
-4. **Confirm**:
-   Present the plan to the user. In CLI mode, prompt for confirmation unless an explicit `--yes` flag is passed; in TUI mode, display a plan review dialog. Support `--dry-run` to print the plan and exit without executing.
-5. **Metadata Backup**:
-   Before modifying any file on disk, create a timestamped backup of the browser's registry files (e.g. `Local State.pmux-backup.<timestamp>`).
-6. **Execute**:
-   Execute the planned actions in sequence. If any step returns an I/O or serialization error, immediately abort forward execution and enter the Rollback sequence.
-7. **Validate**:
-   Perform post-execution sanity checks: re-read the configuration file, ensure JSON/INI documents parse cleanly, and verify that target paths exist with expected permissions. If validation fails, initiate Rollback.
-8. **Commit**:
-   Remove temporary scratch files and prune expired metadata backups. Record the completed action in the local audit log.
+On rollback, undo actions execute in reverse order of original execution, and the temporary backup directory is purged.
 
-### Rollback on Failure
+## Metadata Integrity (`Local State`)
 
-If execution fails or post-validation detects corruption:
-- Revert all filesystem changes in reverse order of execution (e.g. removing created destination directories, moving back renamed folders).
-- Restore the original metadata files from the backup created in Stage 5.
-- Leave the user's browser installation in its original, functional state.
-- Surface the exact failure reason and the restoration status to the user.
+Chromium profile registration and configuration are stored in `<user data root>/Local State`.
 
----
+- **Pre-mutation Backup**: Before `Local State` is modified or overwritten, `Transaction::backup_file` copies the original file into the transaction backup area.
+- **Preservation of Unknown Keys**: `Local State` is parsed into a `serde_json::Value` document. ProfileMux modifies only the keys relevant to the target profile (`profile.info_cache.<dir>` and `profile.profiles_order`). All other vendor keys, feature flags, and unknown fields are preserved untouched.
+- **Synchronized Registration**: Profile creation, cloning, renaming, and deletion update both `info_cache` and `profiles_order` simultaneously within the transaction.
 
-## Process State: Never Kill the Browser
+## Process State: Running Browser Detection and Graceful Quit
 
-Structural mutations (renaming directories, editing `Local State`, copying SQLite databases) while a browser is active risk file lock contention, write collisions, and SQLite database corruption (e.g. invalidating WAL files).
+Modifying a profile while its browser process is running causes file-lock collisions, database write conflicts, and SQLite WAL corruption.
 
-- **Rule**: ProfileMux **never** issues `SIGKILL`, `SIGTERM`, or platform process-termination calls against a running browser.
-- **Enforcement**: If `adapter.is_running()` evaluates to `true`, ProfileMux halts the operation during Preflight and prompts the user to quit the browser normally. Mutation proceeds only when the browser process has cleanly exited and unlocked its files.
+### Per-User-Data-Root Detection
+Chromium allows running multiple browser instances if each uses a distinct `--user-data-dir`. Matching by process executable name alone would incorrectly block mutations on an idle root.
 
----
+ProfileMux checks running state per user data root (`src/browsers/chromium/launch.rs`):
+1. It queries active processes via `/bin/ps -Ao args=`.
+2. It verifies whether an active process for that browser executable was launched with `--user-data-dir=<path>`.
+3. It inspects `<user data root>/SingletonLock`.
 
-## Deletion: OS Trash Only, Never `rm -rf`
+### Stale Lock Recovery
+When Chromium crashes or is killed by the operating system, it leaves behind a dangling `SingletonLock` symlink pointing to `<hostname>-<pid>`. ProfileMux extracts the PID from the link target and verifies whether that process is currently alive using `/bin/ps -p <pid> -o pid=`. If the PID is dead, the lock is recognized as stale and does not block mutation.
 
-Accidental profile deletion can lead to permanent data loss.
+### Graceful Quit via AppleScript
+ProfileMux **never force-terminates** browser processes (`SIGKILL` or `SIGTERM` are never issued).
+- If an operation requires the browser to be closed and an instance is running, the CLI halts with an actionable error:
+  ```text
+  Brave Browser is currently running. Quit the browser or pass --close-browser to continue.
+  ```
+- If `--close-browser` is passed in the CLI, or if the user selects "Quit Browser" in the TUI dialog, ProfileMux sends an AppleScript command to the browser's bundle identifier:
+  ```applescript
+  tell application id "<bundle_id>" to quit
+  ```
+- ProfileMux then polls `is_running()` every 200–250 ms for up to 15 seconds until the browser cleanly closes its files.
 
-- **Rule**: ProfileMux **never** invokes unrecoverable recursive directory removal (`rm -rf` or `std::fs::remove_dir_all`) when deleting a user profile.
-- **Implementation**: Deletion operations will use platform-native trash APIs (e.g. moving the profile folder to `~/.Trash` on macOS).
-- **Recovery**: If a profile is deleted by mistake, the user can recover the directory directly from the operating system's Trash.
+## Deletion: OS Trash Only, Never Recursive `rm -rf`
 
----
+Profile deletion can result in catastrophic data loss if an incorrect path is targeted.
 
-## Directory-Name Sanitization
+- **Rule**: ProfileMux **never** invokes unrecoverable directory deletion (`std::fs::remove_dir_all` or `rm -rf`) on profile data.
+- **`TrashBin` Implementation**: Deleted profiles and external cache folders are moved to `~/.Trash` via `SystemTrash` (`src/fs/trash.rs`).
+- **Collision Handling**: If a folder with the same name exists in Trash, ProfileMux increments a counter (`Profile 1 2`, `Profile 1 3`) rather than overwriting.
+- **Filesystem Boundaries**: If the profile resides on an external or separate volume, a safe copy-and-remove fallback moves the directory across the device boundary (`EXDEV`).
+- **Restoration**: Deleted profiles can be recovered directly from the macOS Trash.
 
-When creating or renaming profile directories on disk, the directory name must adhere to strict sanitization rules:
+## Directory Name Sanitization
 
-1. **Deterministic**: Given the same input name, the sanitization function always produces the identical directory slug.
-2. **Filesystem-Safe**: Restrict output characters to ASCII alphanumerics, hyphens, and underscores (`[a-zA-Z0-9_-]`).
-3. **No Slashes or Traversal**: Reject or strip `/`, `\`, `.`, and `..` to prevent directory traversal attacks.
-4. **Normalized Whitespace**: Trim leading and trailing whitespace; collapse interior spaces and invalid characters into single hyphens.
-5. **Collision-Avoiding**: If the generated directory name matches an existing profile folder, append an incremental numeric suffix (e.g. `Profile-Work-1`).
-6. **Display Name Untouched**: The human-visible display name (stored in metadata) preserves full Unicode characters, spaces, and emojis. Only the physical on-disk directory name is sanitized.
-7. **Preview Before Creation**: The sanitized directory name is always shown in the execution plan before confirmation.
-8. **Data Root Containment**: Every target path is checked against `user_data_root.canonicalize()`. Any path that escapes the user data directory is rejected immediately.
+To prevent directory traversal and filesystem errors, directory names are sanitized deterministically (`src/domain/sanitize.rs`):
 
----
+1. **Deterministic Character Mapping**: Non-alphanumeric characters (excluding `_` and `.`) are converted to hyphens. For example, `NIGHTCLUB & LOUNGE` becomes `NIGHTCLUB-LOUNGE`.
+2. **Length Limit**: Directory names are capped at 48 characters.
+3. **Traversal Prevention**: Names cannot contain slashes (`/` or `\`), null bytes, leading dots (`.`), or `..`.
+4. **Reserved Names**: ProfileMux rejects reserved Chromium directory names:
+   - `.`
+   - `..`
+   - `System Profile`
+   - `Guest Profile`
+   - `Crashpad`
+   - `Local State`
+   - `component_crx_cache`
+   - `extensions_crx_cache`
+5. **Root Containment**: Target directories are verified to ensure `path.parent() == Some(user_data_root)`. Any path escaping the user data root is rejected.
+6. **Collision Avoidance**: If a sanitized name collides with an existing profile directory, ProfileMux appends incremental numeric suffixes (`-2`, `-3`).
 
-## Dry-Run Mode
+The human-visible display name preserves full Unicode characters, spaces, and emojis and is never modified by directory sanitization.
 
-Every mutation command in the CLI will require support for a `--dry-run` flag:
-- Evaluates Inspect, Preflight, and Build Plan stages without executing any I/O.
-- Outputs the complete list of filesystem operations, source/destination paths, and metadata diffs.
-- Reports whether the browser is running or if disk space is insufficient.
+## Template Clones & Privacy Exclusion Boundaries
 
----
+When cloning a profile or creating a profile from a template, ProfileMux strictly isolates private user data:
 
-## Audit Log and Privacy Boundary
+- **Always Excluded**:
+  - Session databases (`Cookies`)
+  - Credential databases (`Login Data`, `Login Data For Account`)
+  - Browsing histories (`History`, `History-journal`)
+  - Open tabs and windows (`Sessions`)
+  - Web database stores (`Web Data`)
+  - Network state cache (`Network Action Predictor`, `Network Persistent State`)
+  - Google Account authentication tokens (`account_info`, `gaia_cookie`)
+  - HTML5 storage (`Local Storage`, `IndexedDB`, `Service Worker`)
+- **Preference Sanitization**:
+  - When `copy_preferences` is enabled, sensitive keys are stripped from `Preferences` before writing to the new profile (`account_info`, `gaia_cookie`, `signin`, `sync`, `google.services`, `password_manager`, `autofill`, etc.).
+- **Extension Signing Warning**:
+  - Chromium signs extension entries in `Secure Preferences` with a per-profile MAC. ProfileMux does not forge or calculate these MACs. If extension copying is requested (`copy` or `copy-settings`), the extension files are copied, but Chromium may drop them on next launch. This behavior is documented as experimental.
 
-### Audit Log Specification
+## Cache Cleanup Boundaries
 
-When mutation is introduced, ProfileMux will maintain a local, append-only audit log located at `~/.config/profilemux/audit.log` (or OS equivalent).
+The `pmux cache clean` command and TUI cache clean action remove only verified temporary cache directories:
 
-The audit log records:
-- ISO 8601 timestamp.
-- Executed command and flags.
-- Browser installation identifier (`BrowserInstallId`).
-- Affected profile directories and filesystem paths.
-- Success, failure, or rollback status.
+- `Cache`
+- `Code Cache`
+- `GPUCache`
+- `ShaderCache`
+- `GrShaderCache`
+- `DawnCache`
+- `DawnGraphiteCache`
+- `DawnWebGPUCache`
+- `component_crx_cache`
+- `Service Worker/CacheStorage`
 
-### Privacy Boundary
+### Untouched Locations
+Cache cleanup **never** removes or alters:
+- `Cookies`
+- `Login Data`
+- `History`
+- `Bookmarks`
+- `Preferences`
+- `Secure Preferences`
+- `Extensions`
+- `Local Storage`
+- `Sessions`
+- `IndexedDB`
+- `Web Data`
+- Custom profile pictures (`Google Profile Picture.png`)
 
-ProfileMux enforces an absolute privacy boundary:
-- **Never Logged**: User browsing history, opened URLs, cookies, passwords, authentication tokens, search queries, or form autofill values.
-- **Never Read**: ProfileMux does not open or inspect SQLite database contents (`History`, `Cookies`, `Login Data`, `Web Data`).
-- **Local Only**: Audit logs remain exclusively on the user's local disk. ProfileMux contains no network clients and sends no telemetry.
+## Dry-Run Verification
+
+All structural operations (`create`, `clone`, `rename`, `avatar`, `delete`, `clean`) support `--dry-run`.
+- The adapter computes the entire `OperationPlan`, including affected paths, steps, exclusions, and estimated reclaimed bytes.
+- The plan is rendered to stdout without modifying disk or terminating processes.
+
+## Out of Scope and Planned Features
+
+The following items are intentionally not implemented and out of scope for v1:
+- **Permanent deletion**: All deletions move to `~/.Trash`. Unrecoverable deletion is not provided.
+- **Non-Chromium browser mutation**: Firefox and Safari adapters are out of scope.
+- **Windows and Linux platforms**: ProfileMux v1 is macOS-specific.
+- **Configuration files & plugin architecture**: No external configuration file is read or written.
+- **Standalone audit log**: Audit logging to a dedicated file (`~/.config/profilemux/audit.log`) is not implemented in v1.
