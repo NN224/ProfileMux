@@ -1,2 +1,4 @@
 /// Placeholder: the ratatui application entry point.
-pub fn run() {}
+pub fn run() -> anyhow::Result<()> {
+    Ok(())
+}
