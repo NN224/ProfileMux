@@ -1,6 +1,6 @@
 # ProfileMux Architecture
 
-This document describes the architectural layering, mutation execution engine, transactional safety guarantees, identity model, trait boundaries, and diagnostic pipeline of ProfileMux (`pmux`).
+This document describes the architectural layering, mutation execution engine, transactional safety guarantees, identity model, trait boundaries, and diagnostic pipeline of ProfileMux 1.0.0 (`pmux`).
 
 ## Layering
 
@@ -202,6 +202,15 @@ Regardless of flags, ProfileMux **always excludes** private session data from cl
 - `CopyExtensionsAndSettings`: Copies `Extensions`, `Local Extension Settings`, and `Sync Extension Settings`.
 - **Chromium Signature Boundary**: Chromium signs extension registrations in `Secure Preferences` with a per-profile MAC (keyed to profile identity). ProfileMux deliberately does not attempt to forge or recompute these MAC signatures. Consequently, copied extensions may be flagged as modified and dropped by the browser upon next launch. This behavior is documented honestly as experimental.
 
+### Browser-Running Preflight and Process State Guard
+
+Before executing any structural mutation, ProfileMux executes a process safety preflight:
+1. **Per-Root Decision**: Whether a browser is running is decided per user data root rather than per binary. Running an instance with an alternative `--user-data-dir` does not block mutations on an idle root.
+2. **Stale Lock Recovery**: A dangling `SingletonLock` symlink left behind by a crash is treated as stale by checking whether the PID it names is still alive via `/bin/ps`. Dead locks do not block mutations.
+3. **Actionable Refusal**: The CLI refuses structural operations on a running root with an actionable error unless `--close-browser` is passed.
+4. **Interactive TUI Handling**: The TUI displays a modal offering "Quit Browser" or "Cancel".
+5. **Graceful Quit via AppleScript**: Browser termination is always requested gracefully through AppleScript (`tell application id "<bundle_id>" to quit`). ProfileMux never force-terminates a browser.
+
 ## Identity Model
 
 ProfileMux uses strict, stable identifiers that never rely on human-editable display names.
@@ -251,3 +260,7 @@ pub fn analyze(install: &BrowserInstall, snapshot: &ProfileStoreSnapshot) -> Vec
 - Performs **no filesystem I/O** and makes no system calls.
 - Inspects snapshot data for missing profile directories, unregistered folders, orphan cache directories, duplicate display names, and metadata corruption.
 - Because it is pure, the doctor engine is thoroughly tested with synthetic snapshots without touching disk.
+
+## Non-Chromium Browsers
+
+There is no adapter for Firefox or Safari; neither is implemented.

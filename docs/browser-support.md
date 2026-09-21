@@ -1,6 +1,6 @@
 # Browser Support Matrix
 
-This document defines the browser support matrix, verified test environments, and live validation results for ProfileMux.
+This document defines the browser support matrix, verified test environments, and live validation results for ProfileMux 1.0.0.
 
 ## Support Matrix
 
@@ -23,8 +23,8 @@ Values are strictly marked as **Yes**, **No**, **Experimental**, or **Untested**
 
 | Browser / Channel | Detect | List | Details | Sizes | Doctor | Launch | Create | Clone | Rename name | Avatar | Rename directory | Delete | Clean cache |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Brave Browser (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Experimental | Yes | Yes |
-| **Brave Browser Beta** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Experimental | Yes | Yes |
+| **Brave Browser (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes |
+| **Brave Browser Beta** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes |
 | **Brave Browser Nightly** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
 | **Google Chrome (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Experimental | Yes | Yes |
 | **Google Chrome Beta** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
@@ -36,10 +36,6 @@ Values are strictly marked as **Yes**, **No**, **Experimental**, or **Untested**
 | **Microsoft Edge Dev** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
 | **Microsoft Edge Canary** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
 | **Vivaldi** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Mozilla Firefox (Stable)** | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| **Mozilla Firefox Developer**| No | No | No | No | No | No | No | No | No | No | No | No | No |
-| **Mozilla Firefox Nightly** | No | No | No | No | No | No | No | No | No | No | No | No | No |
-| **Apple Safari** | No | No | No | No | No | No | No | No | No | No | No | No | No |
 
 ## Live Validation
 
@@ -82,9 +78,9 @@ For each of the three verified installations above, the live validation suite ex
 
 ### Custom Avatar Validation
 - Custom avatar installation was live-validated on **Brave Browser (Stable)** and **Brave Browser Beta**.
-- Custom avatar was skipped on **Google Chrome** because the Chrome adapter does not claim custom avatar capability (`custom_avatar = false`).
+- **Google Chrome (Stable)** has full, live-validated Chromium profile management except the custom avatar, which the Chrome adapter deliberately does not claim and which was therefore never validated. The capability is not claimed for Chrome.
 
-### Implemented but Untested Browsers
+### Implemented and Not Locally Validated Browsers
 Static definitions, bundle IDs, and data path mappings exist in `src/browsers/chromium/discovery.rs` for:
 - **Chromium**
 - **Microsoft Edge** (Stable, Beta, Dev, Canary)
@@ -92,11 +88,10 @@ Static definitions, bundle IDs, and data path mappings exist in `src/browsers/ch
 - **Brave Browser Nightly**
 - **Google Chrome** (Beta, Dev, Canary)
 
-Because application bundles for these browsers were not installed on this test machine, they are classified as **implemented and untested**. They must never be described as verified.
+These browsers have discovery definitions and share the same adapter code but are not installed on the validation machine, so they are implemented and not locally validated — never verified, never supported.
 
 ### Non-Chromium Browsers
-- **Mozilla Firefox**: No adapter exists in the codebase. All operations are marked **No**.
-- **Apple Safari**: Out of scope due to proprietary sandbox constraints and architecture. All operations are marked **No**.
+There is no adapter for Firefox or Safari; neither is implemented.
 
 ## Support Level Definitions
 

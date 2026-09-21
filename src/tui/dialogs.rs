@@ -215,6 +215,9 @@ pub enum PendingAction {
     },
 }
 
+/// Default page scroll step for modal dialogs.
+pub const DIALOG_PAGE: usize = 10;
+
 /// Plan execution confirmation modal state.
 #[derive(Debug, Clone)]
 pub struct ConfirmationDialog {
@@ -253,7 +256,17 @@ impl ConfirmationDialog {
     }
 
     pub fn scroll_down(&mut self) {
-        self.scroll = self.scroll.saturating_add(1);
+        let max_scroll = build_confirmation_lines(self).len().saturating_sub(1);
+        self.scroll = self.scroll.saturating_add(1).min(max_scroll);
+    }
+
+    pub fn scroll_page_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(DIALOG_PAGE);
+    }
+
+    pub fn scroll_page_down(&mut self) {
+        let max_scroll = build_confirmation_lines(self).len().saturating_sub(1);
+        self.scroll = self.scroll.saturating_add(DIALOG_PAGE).min(max_scroll);
     }
 }
 
@@ -296,6 +309,14 @@ impl DoctorDialog {
 
     pub fn scroll_down(&mut self) {
         self.scroll = self.scroll.saturating_add(1);
+    }
+
+    pub fn scroll_page_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(DIALOG_PAGE);
+    }
+
+    pub fn scroll_page_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(DIALOG_PAGE);
     }
 }
 
@@ -679,5 +700,89 @@ mod tests {
         };
         let dialog = BrowserRunningDialog::new(0, "Google Chrome", action);
         assert_eq!(dialog.focused_button, ConfirmButton::Safe);
+    }
+
+    #[test]
+    fn test_plan_visible_lines_fit_and_short_area() {
+        let mut plan = OperationPlan::new(OperationKind::DeleteProfile, "Chrome", "Default");
+        for i in 1..=8 {
+            plan.steps
+                .push(crate::domain::PlanStep::new(format!("Step {i}")));
+        }
+        let action = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: make_test_profile(),
+            mode: DeleteMode::Trash,
+        };
+        let dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", action);
+        let lines = build_confirmation_lines(&dialog);
+
+        let vis_fit = visible_lines(&lines, 0, 30, 80);
+        assert_eq!(vis_fit.len(), lines.len());
+        assert!(!vis_fit.iter().any(|l| l.to_string().contains("... more")));
+
+        let vis_short = visible_lines(&lines, 0, 5, 80);
+        assert_eq!(vis_short.len(), 5);
+        assert!(vis_short.last().unwrap().to_string().contains("... more"));
+    }
+
+    #[test]
+    fn test_delete_confirmation_body_size_lines_after_scrolling_to_bottom() {
+        let mut plan = OperationPlan::new(OperationKind::DeleteProfile, "Chrome", "Default");
+        plan.steps
+            .push(crate::domain::PlanStep::new("Remove profile files"));
+        plan.reclaimed_bytes = Some(3_800_000);
+
+        let delete_info = DeleteInfo::with_sizes(
+            "Default",
+            "Default",
+            Some(1_200_000),
+            Some(2_600_000),
+            Some(3_800_000),
+        );
+        let action = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: make_test_profile(),
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new(
+            "Delete Profile",
+            plan,
+            Some(delete_info),
+            "Move to Trash",
+            action,
+        );
+
+        for _ in 0..50 {
+            dialog.scroll_down();
+        }
+
+        let body = build_confirmation_lines(&dialog);
+        let body_strs: Vec<String> = body.iter().map(|l| l.to_string()).collect();
+        assert!(body_strs.iter().any(|s| s.contains("Profile data:")));
+        assert!(body_strs.iter().any(|s| s.contains("Cache:")));
+        assert!(body_strs.iter().any(|s| s.contains("Total:")));
+    }
+
+    #[test]
+    fn test_scroll_down_clamps_and_scroll_up_stays_zero() {
+        let plan = OperationPlan::new(OperationKind::DeleteProfile, "Chrome", "Default");
+        let action = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: make_test_profile(),
+            mode: DeleteMode::Trash,
+        };
+        let mut dialog = ConfirmationDialog::new("Confirm", plan, None, "Delete", action);
+
+        assert_eq!(dialog.scroll, 0);
+        dialog.scroll_up();
+        assert_eq!(dialog.scroll, 0);
+
+        let lines = build_confirmation_lines(&dialog);
+        let max_scroll = lines.len().saturating_sub(1);
+        for _ in 0..100 {
+            dialog.scroll_down();
+        }
+        assert_eq!(dialog.scroll, max_scroll);
     }
 }

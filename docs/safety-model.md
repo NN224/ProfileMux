@@ -1,6 +1,6 @@
 # Safety Model & Shipped Behaviour
 
-ProfileMux treats browser profiles as critical user assets containing irreplaceable data. This document details the shipped safety model, transaction engine, filesystem guards, process state validation, and privacy invariants implemented in ProfileMux v1.
+ProfileMux treats browser profiles as critical user assets containing irreplaceable data. This document details the shipped safety model, transaction engine, filesystem guards, process state validation, and privacy invariants implemented in ProfileMux 1.0.0.
 
 ## Transactional Architecture and Rollback
 
@@ -127,6 +127,7 @@ The `pmux cache clean` command and TUI cache clean action remove only verified t
 - `DawnWebGPUCache`
 - `component_crx_cache`
 - `Service Worker/CacheStorage`
+- External macOS cache: `~/Library/Caches/<browser-vendor>/<channel>/<profile-dir>`
 
 ### Untouched Locations
 Cache cleanup **never** removes or alters:
@@ -149,11 +150,11 @@ All structural operations (`create`, `clone`, `rename`, `avatar`, `delete`, `cle
 - The adapter computes the entire `OperationPlan`, including affected paths, steps, exclusions, and estimated reclaimed bytes.
 - The plan is rendered to stdout without modifying disk or terminating processes.
 
-## Out of Scope and Planned Features
+## Out of Scope
 
-The following items are intentionally not implemented and out of scope for v1:
+The following items are intentionally not implemented and out of scope for 1.0.0:
 - **Permanent deletion**: All deletions move to `~/.Trash`. Unrecoverable deletion is not provided.
-- **Non-Chromium browser mutation**: Firefox and Safari adapters are out of scope.
-- **Windows and Linux platforms**: ProfileMux v1 is macOS-specific.
+- **Non-Chromium browsers**: There is no adapter for Firefox or Safari; neither is implemented.
+- **Windows and Linux platforms**: ProfileMux 1.0.0 is macOS-specific.
 - **Configuration files & plugin architecture**: No external configuration file is read or written.
-- **Standalone audit log**: Audit logging to a dedicated file (`~/.config/profilemux/audit.log`) is not implemented in v1.
+- **Standalone audit log**: Audit logging to a dedicated file (`~/.config/profilemux/audit.log`) is not implemented in 1.0.0.

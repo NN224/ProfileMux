@@ -56,11 +56,16 @@ pub fn handle_dialog_key(app: &mut App, code: KeyCode) {
         Dialog::Form(f) => handle_form_key(app, f, code),
         Dialog::Confirmation(c) => handle_confirmation_key(app, c, code),
         Dialog::BrowserRunning(b) => handle_browser_running_key(app, b, code),
-        Dialog::Doctor(_) | Dialog::Error(_) => {
-            if code == KeyCode::Enter {
-                app.close_dialog();
-            }
-        }
+        Dialog::Doctor(d) => match code {
+            KeyCode::Up => d.scroll_up(),
+            KeyCode::Down => d.scroll_down(),
+            KeyCode::PageUp => d.scroll_page_up(),
+            KeyCode::PageDown => d.scroll_page_down(),
+            KeyCode::Enter => app.close_dialog(),
+            _ => {}
+        },
+        Dialog::Error(_) if code == KeyCode::Enter => app.close_dialog(),
+        Dialog::Error(_) => {}
     }
 
     if app.active_dialog.is_none() && !app.dialog_consumed {
@@ -265,18 +270,15 @@ fn submit_clone_form(app: &mut App, b_idx: usize, form: &ProfileForm) {
 
 fn handle_confirmation_key(app: &mut App, c: &mut ConfirmationDialog, code: KeyCode) {
     match code {
+        KeyCode::Up => c.scroll_up(),
+        KeyCode::Down => c.scroll_down(),
+        KeyCode::PageUp => c.scroll_page_up(),
+        KeyCode::PageDown => c.scroll_page_down(),
         KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
             c.focused_button = c.focused_button.toggle();
         }
-        KeyCode::Enter => {
-            if c.focused_button == ConfirmButton::Safe {
-                app.close_dialog();
-            } else {
-                let plan = c.plan.clone();
-                let action = c.action.clone();
-                confirm_action(app, plan, action);
-            }
-        }
+        KeyCode::Enter if c.focused_button == ConfirmButton::Safe => app.close_dialog(),
+        KeyCode::Enter => confirm_action(app, c.plan.clone(), c.action.clone()),
         _ => {}
     }
 }
@@ -763,5 +765,49 @@ mod tests {
             assert!(app.active_dialog.is_none());
             assert!(app.pending_mutation.is_none());
         }
+    }
+
+    #[test]
+    fn test_confirmation_dialog_scrolling_and_keys() {
+        let mut app = make_test_app(BrowserCapabilities::READ_ONLY);
+        let prof = app.current_profile().unwrap().clone();
+        let mut plan = OperationPlan::new(OperationKind::DeleteProfile, "Test", "Default");
+        for i in 0..20 {
+            plan.steps
+                .push(crate::domain::PlanStep::new(format!("Step {i}")));
+        }
+        let act = PendingAction::DeleteProfile {
+            browser_index: 0,
+            profile: prof,
+            mode: DeleteMode::Trash,
+        };
+        let open_dlg = |app: &mut App| {
+            app.open_dialog(Dialog::confirmation(ConfirmationDialog::new(
+                "Confirm",
+                plan.clone(),
+                None,
+                "Delete",
+                act.clone(),
+            )))
+        };
+        open_dlg(&mut app);
+        handle_dialog_key(&mut app, KeyCode::Down);
+        assert!(matches!(&app.active_dialog, Some(Dialog::Confirmation(c)) if c.scroll == 1));
+        handle_dialog_key(&mut app, KeyCode::Up);
+        assert!(matches!(&app.active_dialog, Some(Dialog::Confirmation(c)) if c.scroll == 0));
+        handle_dialog_key(&mut app, KeyCode::PageDown);
+        assert!(
+            matches!(&app.active_dialog, Some(Dialog::Confirmation(c)) if c.scroll == crate::tui::dialogs::DIALOG_PAGE)
+        );
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none() && app.pending_mutation.is_none());
+        open_dlg(&mut app);
+        handle_dialog_key(&mut app, KeyCode::Tab);
+        handle_dialog_key(&mut app, KeyCode::Enter);
+        assert!(app.active_dialog.is_none() && app.pending_mutation.is_some());
+        app.pending_mutation = None;
+        open_dlg(&mut app);
+        handle_dialog_key(&mut app, KeyCode::Esc);
+        assert!(app.active_dialog.is_none() && app.pending_mutation.is_none());
     }
 }

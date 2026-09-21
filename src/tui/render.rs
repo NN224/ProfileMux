@@ -474,6 +474,10 @@ fn render_help_overlay(frame: &mut Frame) {
             "Esc:             ",
             "Clear filter / Close dialog or overlay",
         ),
+        detail_line(
+            "Dialog keys:     ",
+            "Inside a dialog: Up/Down scroll plan by line, PageUp/PageDown by page, Enter confirms focused button, Esc cancels",
+        ),
         detail_line("F5:              ", "Re-scan storage for selected profile"),
         detail_line("N:               ", "New profile form"),
         detail_line("C:               ", "Clone profile form"),

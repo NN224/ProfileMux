@@ -4,7 +4,12 @@ ProfileMux is a local-first Chromium browser profile manager for macOS, written 
 
 ## Status
 
-ProfileMux is at **v1**. It supports full Chromium-family profile management on macOS.
+ProfileMux is at version **1.0.0**, the first usable release. It supports full Chromium-family profile management on macOS.
+
+- **Brave Browser (Stable)** and **Brave Browser Beta** have full, live-validated Chromium profile management including a live-validated custom avatar.
+- **Google Chrome (Stable)** has full, live-validated Chromium profile management except the custom avatar, which the Chrome adapter deliberately does not claim and which was therefore never validated (the capability is not claimed for Chrome).
+- **Chromium**, **Microsoft Edge** (all channels), **Vivaldi**, **Brave Nightly**, and the non-stable **Google Chrome** channels (Beta, Dev, Canary) have discovery definitions and share the same adapter code but are not installed on the validation machine, so they are implemented and not locally validated — never verified, never supported.
+- There is no adapter for Firefox or Safari; neither is implemented.
 
 ### Implemented and Live-Validated
 The following capabilities are implemented and live-validated on macOS:
@@ -17,7 +22,7 @@ The following capabilities are implemented and live-validated on macOS:
 - Profile creation from a template with an explicit clone policy
 - Profile cloning (`pmux profile clone`)
 - Display-name renaming (`pmux profile rename --name <NAME>`)
-- Custom profile avatar assignment (`pmux profile avatar`)
+- Custom profile avatar assignment on Brave (`pmux profile avatar`)
 - Safe profile deletion to the macOS Trash (`pmux profile delete`)
 - Cache-only cleanup (`pmux cache clean`)
 - Dry-run simulation for every structural operation (`--dry-run`)
@@ -27,12 +32,12 @@ The following capabilities are implemented and live-validated on macOS:
 
 ### Experimental Capabilities
 Marked experimental in `BrowserCapabilities`:
-- **Custom profile avatar**: Supported and validated on Brave Browser and Brave Browser Beta only. Chrome does not claim this capability.
+- **Custom profile avatar**: Supported and live-validated on Brave Browser and Brave Browser Beta only. The Chrome adapter deliberately does not claim this capability.
 - **Profile directory renaming**: Implemented for all Chromium adapters via `pmux profile rename --directory <DIR>`, but marked experimental due to deep internal path references in extension and browser state.
-- **Extension copying during template creation or clone**: The default policy is `none` (no extensions copied). Two optional policies exist: `copy` (copies installed extension payloads from `Extensions`) and `copy-settings` (copies `Extensions`, `Local Extension Settings`, and `Sync Extension Settings`). However, Chromium signs extension registrations in `Secure Preferences` with a per-profile message authentication code (MAC). ProfileMux deliberately does not forge or recompute these signatures, so copied extensions may be detected as tampered with and dropped by the browser on next launch.
+- **Extension copying during template creation or clone**: The default policy is `none` (no extensions copied). Two optional policies exist: `copy` (copies installed extension payloads from `Extensions`) and `copy-settings` (copies `Extensions`, `Local Extension Settings`, and `Sync Extension Settings`). Chromium signs extension registrations in `Secure Preferences` with a per-profile message authentication code (MAC). ProfileMux deliberately does not forge or recompute these signatures, so copied extensions may be dropped by the browser on next launch.
 
 ### Not Implemented and Out of Scope
-- Firefox and Safari adapters
+- There is no adapter for Firefox or Safari; neither is implemented.
 - Windows and Linux support
 - Permanent (non-Trash) deletion
 - Configuration files
@@ -43,9 +48,32 @@ Marked experimental in `BrowserCapabilities`:
 
 Building ProfileMux requires Rust 1.80 or later.
 
+### Install
+
+Install to `~/.cargo/bin` from source. That directory must be on your `PATH`;
+afterwards `pmux` with no arguments opens the TUI.
+
+```bash
+cargo install --path .
+pmux
+```
+
+Or build a release binary manually:
+
 ```bash
 cargo build --release
-./target/release/pmux --help
+cp target/release/pmux /usr/local/bin/
+```
+
+### Uninstall
+
+ProfileMux writes no background services, daemons, shell extensions, configuration files, or internal databases. To uninstall, delete the binary:
+
+```bash
+# The crate is named `profilemux`; the binary it installs is `pmux`.
+cargo uninstall profilemux
+# or remove the binary directly:
+rm -f ~/.cargo/bin/pmux /usr/local/bin/pmux
 ```
 
 ## CLI Usage
@@ -254,12 +282,28 @@ pmux profile delete brave/Profile-2 --yes --close-browser
 
 ### Clean cache directories
 
-Removes HTTP cache, code cache, GPU cache, and service worker cache storage without touching user data or credentials:
+Removes temporary cache stores without touching user credentials, browsing history, or bookmarks.
+
+Locations cleaned:
+- Core profile caches: `Cache` (HTTP cache), `Code Cache` (compiled JS/Wasm), `GPUCache`, `ShaderCache`, `GrShaderCache`, `DawnCache`, `DawnGraphiteCache`, `DawnWebGPUCache`, `component_crx_cache`, and `Service Worker/CacheStorage`
+- External macOS cache: `~/Library/Caches/<browser-vendor>/<channel>/<profile-dir>`
+
+Locations preserved (never touched):
+- `Cookies`, `Login Data`, `History`, `Bookmarks`, `Preferences`, `Secure Preferences`, `Extensions`, `Local Storage`, `Sessions`, `IndexedDB`, `Web Data`, and custom avatar images (`Google Profile Picture.png`)
 
 ```bash
 pmux cache clean brave/Default --dry-run
 pmux cache clean brave/Default --yes
 ```
+
+### Browser-Running Preflight
+
+Every structural operation executes a process safety preflight before modifying files:
+- **Root-scoped detection**: Whether a browser is running is decided per user data root rather than per binary, so running a browser with a different `--user-data-dir` does not block mutations on an idle root.
+- **Stale lock recovery**: A `SingletonLock` symlink left behind by a crash is treated as stale if the PID it names is no longer alive.
+- **Actionable refusal**: The CLI refuses any structural operation with an actionable error if the target browser root is running, unless `--close-browser` is passed.
+- **Interactive TUI prompt**: The TUI prompts with Quit Browser or Cancel.
+- **Graceful AppleScript quit**: Browser quits are always requested through AppleScript (`tell application id "<bundle_id>" to quit`). ProfileMux never force-terminates a browser.
 
 ### Run health doctor
 
@@ -320,6 +364,16 @@ N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean
 | `?` | Toggle keybinding help overlay |
 | `q` / `Ctrl-C` | Quit ProfileMux |
 
+#### Modal Dialog Navigation
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Scroll a long operation plan by one line |
+| `PageUp` / `PageDown` | Scroll a long operation plan by a page |
+| `Left` / `Right` / `Tab` | Switch between dialog buttons (e.g. Cancel / Confirm) |
+| `Enter` | Confirm the focused button |
+| `Esc` | Cancel operation and close dialog |
+
 ## Feature Status
 
 | Capability | Category | Status | Notes |
@@ -336,15 +390,15 @@ N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean
 | Rename Display Name | Mutation | Stable | Updates display name in `Local State`; directory remains untouched |
 | Delete Profile | Mutation | Stable | Moves profile and cache directories to `~/.Trash` and deregisters |
 | Cache Cleanup | Maintenance | Stable | Prunes verified cache directories; preserves credentials, history, cookies |
-| Custom Profile Avatar | Customization | Experimental | Supported on Brave and Brave Beta only; Chrome does not claim it |
+| Custom Profile Avatar | Customization | Experimental (Brave) | Live-validated on Brave and Brave Beta; Chrome adapter deliberately does not claim it |
 | Rename Profile Directory | Mutation | Experimental | Renames on-disk folder and updates `Local State` references |
 | Extension Copying | Mutation | Experimental | Copies extension files; Chromium `Secure Preferences` MAC may drop them |
 | Rollback Transactions | Safety | Stable | `Transaction` records inverse operations; rolls back on error or `Drop` |
 | Running Browser Guard | Safety | Stable | Prevents structural writes while browser holds root open; graceful quit |
-| Firefox Adapter | Integration | Not implemented | Out of scope |
-| Safari Adapter | Integration | Not implemented | Out of scope |
 | Windows / Linux | Platform | Not implemented | Out of scope |
 | Permanent Deletion | Safety | Not implemented | Out of scope; ProfileMux only moves to Trash |
+
+There is no adapter for Firefox or Safari; neither is implemented.
 
 ## Privacy
 
