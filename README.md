@@ -35,7 +35,7 @@
 > - Local-first: zero network calls, zero telemetry, zero analytics.
 
 <p align="center">
-  <img src="docs/assets/profilemux-tui.svg" alt="ProfileMux Terminal User Interface" width="100%">
+  <img src="docs/assets/profilemux-tui.png" alt="ProfileMux Terminal User Interface" width="100%">
 </p>
 
 <p align="center">
