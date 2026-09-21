@@ -86,8 +86,14 @@ pub fn launch(install: &BrowserInstall, profile_directory: &str) -> Result<()> {
     Ok(())
 }
 
-fn process_matches_executable(exec_path: &Path) -> bool {
-    let Some(exec_str) = exec_path.to_str() else {
+/// True when a process for `exec_path` is running against `user_data_root`.
+///
+/// A Chromium instance started normally carries no `--user-data-dir` argument
+/// and uses its default root, so matching on the executable alone would report
+/// an unrelated root as busy. Matching the argument keeps the check per-root,
+/// which is what every preflight actually needs.
+fn process_matches_root(exec_path: &Path, user_data_root: &Path) -> bool {
+    let (Some(exec_str), Some(root_str)) = (exec_path.to_str(), user_data_root.to_str()) else {
         return false;
     };
     let Ok(output) = Command::new("/bin/ps").args(["-Ao", "args="]).output() else {
@@ -96,27 +102,56 @@ fn process_matches_executable(exec_path: &Path) -> bool {
     if !output.status.success() {
         return false;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+    let needle = format!("--user-data-dir={root_str}");
+    String::from_utf8_lossy(&output.stdout)
         .lines()
-        .any(|line| line.trim_start().starts_with(exec_str))
+        .filter(|line| line.trim_start().starts_with(exec_str))
+        .any(|line| line.contains(&needle))
 }
 
-/// Checks whether this specific browser installation is currently running.
+/// True when the browser holds `user_data_root` open right now.
 ///
-/// Returns true if either:
-/// 1. `<user_data_root>/SingletonLock` exists (including dangling symlinks).
-/// 2. A running process matches the resolved executable path in `/bin/ps -Ao args=`.
+/// Chromium writes `SingletonLock` as a symlink to `<hostname>-<pid>` and
+/// removes it on a clean exit. After a crash or a kill the link survives, so
+/// the pid it names is checked for liveness; a stale lock must not block
+/// mutation forever.
 pub fn is_running(install: &BrowserInstall) -> bool {
-    let lock_path = install.user_data_root.join("SingletonLock");
-    let lock_exists = std::fs::symlink_metadata(&lock_path).is_ok();
-
-    let process_running = match executable_path(install) {
-        Ok(exec_path) => process_matches_executable(&exec_path),
+    if singleton_lock_is_live(&install.user_data_root) {
+        return true;
+    }
+    match executable_path(install) {
+        Ok(exec_path) => process_matches_root(&exec_path, &install.user_data_root),
         Err(_) => false,
-    };
+    }
+}
 
-    lock_exists || process_running
+/// Whether `SingletonLock` exists and names a process that is still alive.
+pub fn singleton_lock_is_live(user_data_root: &Path) -> bool {
+    let lock_path = user_data_root.join("SingletonLock");
+    if std::fs::symlink_metadata(&lock_path).is_err() {
+        return false;
+    }
+    let Ok(target) = std::fs::read_link(&lock_path) else {
+        // Not a symlink: treat its presence as conservative evidence of a
+        // running browser, since the pid cannot be checked.
+        return true;
+    };
+    let Some(pid) = target
+        .to_str()
+        .and_then(|t| t.rsplit('-').next())
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return true;
+    };
+    pid_is_alive(pid)
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "pid="])
+        .output()
+        .map(|out| out.status.success() && !out.stdout.is_empty())
+        .unwrap_or(false)
 }
 
 /// Requests the browser application to quit gracefully via AppleScript (`osascript`).

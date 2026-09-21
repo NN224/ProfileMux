@@ -199,7 +199,7 @@ fn build_install(
         version: bundle.version,
         user_data_root,
         cache_root,
-        support: SupportLevel::ReadOnly,
+        support: SupportLevel::Full,
     })
 }
 

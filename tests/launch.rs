@@ -137,14 +137,19 @@ fn test_is_running_singleton_lock_detection() {
 
     assert!(!is_running(&install));
 
+    // A lock naming this test process is live, so the browser counts as running.
     let lock_path = user_data_root.join("SingletonLock");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink("nonexistent_lock_target:99999", &lock_path)
-        .expect("create symlink");
-    #[cfg(not(unix))]
-    std::fs::write(&lock_path, b"").expect("create lock file");
-
+    std::os::unix::fs::symlink(format!("host.local-{}", std::process::id()), &lock_path)
+        .expect("create live lock");
     assert!(is_running(&install));
+
+    // A lock left behind by a crashed process must not block forever.
+    std::fs::remove_file(&lock_path).expect("remove lock");
+    std::os::unix::fs::symlink("host.local-999999", &lock_path).expect("create stale lock");
+    assert!(
+        !is_running(&install),
+        "a stale SingletonLock must not report the browser as running"
+    );
 
     std::fs::remove_file(&lock_path).expect("remove lock");
     assert!(!is_running(&install));
