@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NN224/ProfileMux"><img src="https://img.shields.io/badge/version-1.1.0-blue?style=flat-square" alt="Version 1.1.0"></a>
+  <a href="https://github.com/NN224/ProfileMux"><img src="https://img.shields.io/badge/version-1.2.0-blue?style=flat-square" alt="Version 1.2.0"></a>
   <img src="https://img.shields.io/badge/rust-1.88+-orange?style=flat-square" alt="Rust 1.88+">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="macOS">
   <img src="https://img.shields.io/badge/tui-Ratatui%200.29-blueviolet?style=flat-square" alt="Ratatui 0.29">
-  <img src="https://img.shields.io/badge/tests-174%20passing-brightgreen?style=flat-square" alt="174 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-217%20passing-brightgreen?style=flat-square" alt="217 Tests Passing">
   <img src="https://img.shields.io/badge/status-stable-success?style=flat-square" alt="Status: Stable">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/architecture-local--first-informational?style=flat-square" alt="Local-First">
@@ -845,12 +845,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-The suite is **174 passing tests** plus 5 that are `#[ignore]`d because they drive
+The suite is **217 passing tests** plus 8 that are `#[ignore]`d because they drive
 real browsers. Those live tests point each real browser binary at an isolated
 temporary user data root through Chromium's own `--user-data-dir` override:
 
 ```bash
 cargo test --test live_browser -- --ignored --nocapture
+cargo test --test live_appearance -- --ignored --nocapture
 ```
 
 Every mutation test runs against a `tempfile` fixture or an isolated root, and

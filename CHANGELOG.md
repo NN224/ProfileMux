@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-22
 
 ### Added
 - Per-profile browser theme control (System, Dark, and Brave Ultra Dark).
@@ -31,5 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First release with Chromium profile discovery, inspection, creation, template cloning, renaming, avatars, deletion to Trash, cache cleanup, doctor and dry-run.
 
+[1.2.0]: https://github.com/NN224/ProfileMux/releases/tag/v1.2.0
 [1.1.0]: https://github.com/NN224/ProfileMux/releases/tag/v1.1.0
 [1.0.0]: https://github.com/NN224/ProfileMux/releases/tag/v1.0.0
