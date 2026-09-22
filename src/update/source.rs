@@ -75,6 +75,26 @@ impl GithubReleaseSource {
     }
 }
 
+/// Turns a transport failure into a message a user can act on. GitHub's
+/// unauthenticated API allows 60 requests an hour per address, and a shared
+/// address can exhaust that, so a bare "403" would be misleading.
+fn describe_request_error(err: ureq::Error) -> Error {
+    if let ureq::Error::Status(code, resp) = &err {
+        let remaining = resp.header("x-ratelimit-remaining").unwrap_or("");
+        if *code == 403 && remaining == "0" {
+            return Error::Update(
+                "GitHub's API rate limit for this network is exhausted; \
+                 update checks are unauthenticated, so try again later"
+                    .to_string(),
+            );
+        }
+        return Error::Update(format!(
+            "GitHub returned HTTP {code} for the latest release"
+        ));
+    }
+    Error::Update(format!("failed to reach GitHub: {err}"))
+}
+
 impl ReleaseSource for GithubReleaseSource {
     fn latest_release(&self) -> Result<ReleaseInfo> {
         let url = format!(
@@ -86,9 +106,7 @@ impl ReleaseSource for GithubReleaseSource {
             .set("User-Agent", &user_agent())
             .set("Accept", "application/vnd.github+json")
             .call()
-            .map_err(|e| {
-                Error::Update(format!("failed to fetch latest release from GitHub: {e}"))
-            })?;
+            .map_err(describe_request_error)?;
 
         let body = resp
             .into_string()
