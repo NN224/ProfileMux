@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod browser;
 pub mod capability;
 pub mod health;
@@ -5,6 +6,9 @@ pub mod operation;
 pub mod profile;
 pub mod sanitize;
 
+pub use appearance::{
+    Appearance, AppearanceCapabilities, AppearanceSpec, BrowserTheme, WebDarkMode,
+};
 pub use browser::{BrowserInstall, BrowserInstallId, BrowserKind, Channel, SupportLevel};
 pub use capability::BrowserCapabilities;
 pub use health::{HealthFinding, Severity};

@@ -1,8 +1,9 @@
 pub mod chromium;
 
 use crate::domain::{
-    BrowserCapabilities, BrowserInstall, BrowserProfile, CloneProfileSpec, CreateProfileSpec,
-    DeleteMode, HealthFinding, OperationPlan, ProfileStoreSnapshot,
+    Appearance, AppearanceCapabilities, AppearanceSpec, BrowserCapabilities, BrowserInstall,
+    BrowserProfile, CloneProfileSpec, CreateProfileSpec, DeleteMode, HealthFinding, OperationPlan,
+    ProfileStoreSnapshot,
 };
 use crate::error::{Error, Result};
 
@@ -110,6 +111,28 @@ pub trait BrowserAdapter {
     /// Removes verified cache locations only. Returns bytes reclaimed.
     fn clean_cache(&self, _profile: &BrowserProfile) -> Result<u64> {
         Err(self.unsupported("clean_cache"))
+    }
+
+    /// What this adapter can change about a profile's appearance.
+    fn appearance_capabilities(&self) -> AppearanceCapabilities {
+        AppearanceCapabilities::NONE
+    }
+
+    /// Reads the profile's current appearance. Read-only.
+    fn read_appearance(&self, _profile: &BrowserProfile) -> Result<Appearance> {
+        Err(self.unsupported("appearance"))
+    }
+
+    fn plan_set_appearance(
+        &self,
+        _profile: &BrowserProfile,
+        _spec: &AppearanceSpec,
+    ) -> Result<OperationPlan> {
+        Err(self.unsupported("appearance"))
+    }
+
+    fn set_appearance(&self, _profile: &BrowserProfile, _spec: &AppearanceSpec) -> Result<()> {
+        Err(self.unsupported("appearance"))
     }
 
     fn unsupported(&self, operation: &str) -> Error {

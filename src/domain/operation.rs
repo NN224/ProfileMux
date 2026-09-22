@@ -13,6 +13,7 @@ pub enum OperationKind {
     SetAvatar,
     DeleteProfile,
     CleanCache,
+    SetAppearance,
 }
 
 impl OperationKind {
@@ -25,6 +26,7 @@ impl OperationKind {
             OperationKind::SetAvatar => "SET PROFILE AVATAR",
             OperationKind::DeleteProfile => "DELETE PROFILE",
             OperationKind::CleanCache => "CLEAN CACHE",
+            OperationKind::SetAppearance => "SET APPEARANCE",
         }
     }
 }
