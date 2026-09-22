@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::browsers::BrowserAdapter;
 use crate::domain::{
@@ -90,6 +90,7 @@ pub struct App {
     /// Background release check. `None` until a result arrives.
     pub update: Option<UpdateCheckResult>,
     update_checker: UpdateChecker,
+    pub appearance_cache: HashMap<ProfileId, crate::domain::Appearance>,
 }
 
 impl App {
@@ -120,7 +121,7 @@ impl App {
 
     /// Initializes state with an explicitly supplied list of browsers (for testing).
     pub fn with_browsers(browsers: Vec<BrowserItem>) -> Self {
-        Self {
+        let mut app = Self {
             browsers,
             selected_browser: 0,
             selected_profile: 0,
@@ -141,7 +142,10 @@ impl App {
             dialog_consumed: false,
             update: None,
             update_checker: UpdateChecker::spawn(),
-        }
+            appearance_cache: HashMap::new(),
+        };
+        app.refresh_selected_appearance();
+        app
     }
 
     /// Returns the currently selected browser, if any exist.
@@ -189,6 +193,7 @@ impl App {
             }
             Focus::Details => {}
         }
+        self.refresh_selected_appearance();
     }
 
     /// Moves selection down in the currently active pane.
@@ -209,6 +214,7 @@ impl App {
             }
             Focus::Details => {}
         }
+        self.refresh_selected_appearance();
     }
 
     /// Sets the focus and queues background size measurements if entering the profile list.
@@ -311,24 +317,28 @@ impl App {
         self.filter.clear();
         self.filter_input.clear();
         self.selected_profile = 0;
+        self.refresh_selected_appearance();
     }
 
     pub fn accept_filter(&mut self) {
         self.filter_mode = false;
         self.filter = self.filter_input.clone();
         self.selected_profile = 0;
+        self.refresh_selected_appearance();
     }
 
     pub fn filter_push(&mut self, c: char) {
         self.filter_input.push(c);
         self.filter = self.filter_input.clone();
         self.selected_profile = 0;
+        self.refresh_selected_appearance();
     }
 
     pub fn filter_pop(&mut self) {
         self.filter_input.pop();
         self.filter = self.filter_input.clone();
         self.selected_profile = 0;
+        self.refresh_selected_appearance();
     }
 
     pub fn close_overlays(&mut self) {
@@ -461,6 +471,11 @@ impl App {
                 profile,
             } => self.execute_clean_cache(browser_index, profile),
             PendingAction::InstallUpdate { latest } => self.execute_update(latest),
+            PendingAction::SetAppearance {
+                browser_index,
+                profile,
+                spec,
+            } => self.execute_set_appearance(browser_index, profile, spec),
         }
     }
 
@@ -636,6 +651,78 @@ impl App {
                 }));
             }
         }
+    }
+
+    pub fn refresh_selected_appearance(&mut self) {
+        let Some(profile) = self.current_profile() else {
+            return;
+        };
+        let profile_id = profile.id.clone();
+        let Some(browser) = self.current_browser() else {
+            return;
+        };
+        let theme = match browser.adapter.read_appearance(profile) {
+            Ok(app) => app.theme,
+            Err(_) => crate::domain::BrowserTheme::Unknown,
+        };
+        let web_dark = crate::policy::default_path()
+            .ok()
+            .and_then(|p| crate::policy::load(&p).ok())
+            .map(|s| s.get(&profile_id).web_dark)
+            .unwrap_or(crate::domain::WebDarkMode::Normal);
+
+        self.appearance_cache
+            .insert(profile_id, crate::domain::Appearance { theme, web_dark });
+    }
+
+    fn apply_appearance_spec(
+        &mut self,
+        b_idx: usize,
+        profile: &BrowserProfile,
+        spec: &crate::domain::AppearanceSpec,
+    ) -> crate::error::Result<()> {
+        let Some(browser) = self.browsers.get(b_idx) else {
+            return Ok(());
+        };
+        if spec.theme.is_some() {
+            browser.adapter.set_appearance(profile, spec)?;
+        }
+        if let Some(web_dark) = spec.web_dark {
+            let policy_path = crate::policy::default_path()?;
+            let store = crate::policy::load(&policy_path)?;
+            let mut policy = store.get(&profile.id);
+            policy.web_dark = web_dark;
+            store.set(&profile.id, policy).save()?;
+        }
+        Ok(())
+    }
+
+    fn execute_set_appearance(
+        &mut self,
+        b_idx: usize,
+        profile: BrowserProfile,
+        spec: crate::domain::AppearanceSpec,
+    ) {
+        if let Err(e) = self.apply_appearance_spec(b_idx, &profile, &spec) {
+            self.status_message = None;
+            self.open_dialog(Dialog::Error(ErrorDialog {
+                title: "Set Appearance Failed".to_string(),
+                message: e.to_string(),
+            }));
+            return;
+        }
+        self.refresh_selected_appearance();
+        let mut parts = Vec::new();
+        if let Some(t) = spec.theme {
+            parts.push(format!("theme: {}", t.label()));
+        }
+        if let Some(w) = spec.web_dark {
+            parts.push(format!("web dark: {}", w.label()));
+        }
+        let details = parts.join(", ");
+        self.status_message = Some(format!(
+            "Updated appearance ({details}). Force Dark applies from the next launch ProfileMux performs."
+        ));
     }
 }
 

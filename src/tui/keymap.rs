@@ -26,6 +26,7 @@ pub enum Action {
     Doctor,
     CleanCache,
     Update,
+    Appearance,
 }
 
 /// Pure case-insensitive subsequence matcher.
@@ -82,6 +83,7 @@ pub fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('o') | KeyCode::Char('O') => Some(Action::OpenFolder),
         KeyCode::Char('H') => Some(Action::Doctor),
         KeyCode::Char('x') | KeyCode::Char('X') => Some(Action::CleanCache),
+        KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::Appearance),
         _ => None,
     }
 }
@@ -143,6 +145,14 @@ mod tests {
         assert_eq!(
             map_key(KeyEvent::from(KeyCode::Char('H'))),
             Some(Action::Doctor)
+        );
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Char('t'))),
+            Some(Action::Appearance)
+        );
+        assert_eq!(
+            map_key(KeyEvent::from(KeyCode::Char('T'))),
+            Some(Action::Appearance)
         );
     }
 }

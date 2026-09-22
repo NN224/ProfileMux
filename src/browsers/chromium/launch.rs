@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::domain::BrowserInstall;
+use crate::domain::{BrowserInstall, WebDarkMode};
 use crate::error::{Error, Result};
+use crate::policy::LaunchPolicy;
 
 /// Resolves the real binary inside the application bundle.
 ///
@@ -58,6 +59,26 @@ pub fn executable_path(install: &BrowserInstall) -> Result<PathBuf> {
     Err(Error::NotFound(macos_dir))
 }
 
+/// Builds the launch arguments for Chromium.
+///
+/// Force dark is launch-time only, meaning it does not require the browser to
+/// be closed to change. It applies from the next launch ProfileMux performs; a
+/// browser window the user opened themselves will not have it.
+pub fn launch_args(
+    user_data_root: &Path,
+    profile_directory: &str,
+    policy: &LaunchPolicy,
+) -> Vec<String> {
+    let mut args = vec![
+        format!("--user-data-dir={}", user_data_root.display()),
+        format!("--profile-directory={profile_directory}"),
+    ];
+    if policy.web_dark == WebDarkMode::ForceDark {
+        args.push("--enable-features=WebContentsForceDark".to_string());
+    }
+    args
+}
+
 /// Builds, without spawning, the command that launches a Chromium browser on a specific profile.
 ///
 /// Arguments are constructed without shell-quoting so spaces or metacharacters in the profile
@@ -68,22 +89,41 @@ pub fn launch_command(
     profile_directory: &str,
 ) -> Command {
     let mut cmd = Command::new(executable);
-    cmd.arg(format!("--user-data-dir={}", user_data_root.display()));
-    cmd.arg(format!("--profile-directory={profile_directory}"));
+    cmd.args(launch_args(
+        user_data_root,
+        profile_directory,
+        &LaunchPolicy::default(),
+    ));
     cmd
+}
+
+/// Resolves the browser executable, builds the launch command with the given policy, detaches stdio, and spawns it.
+///
+/// Returns immediately without waiting for the process to exit.
+pub fn launch_with_policy(
+    install: &BrowserInstall,
+    profile_directory: &str,
+    policy: &LaunchPolicy,
+) -> Result<()> {
+    let executable = executable_path(install)?;
+    let mut cmd = Command::new(&executable);
+    cmd.args(launch_args(
+        &install.user_data_root,
+        profile_directory,
+        policy,
+    ));
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.spawn().map_err(|err| Error::io(executable, err))?;
+    Ok(())
 }
 
 /// Resolves the browser executable, builds the launch command, detaches stdio, and spawns it.
 ///
 /// Returns immediately without waiting for the process to exit.
 pub fn launch(install: &BrowserInstall, profile_directory: &str) -> Result<()> {
-    let executable = executable_path(install)?;
-    let mut cmd = launch_command(&executable, &install.user_data_root, profile_directory);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.spawn().map_err(|err| Error::io(executable, err))?;
-    Ok(())
+    launch_with_policy(install, profile_directory, &LaunchPolicy::default())
 }
 
 /// True when a process for `exec_path` is running against `user_data_root`.

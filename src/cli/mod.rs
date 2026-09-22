@@ -1,3 +1,4 @@
+pub mod appearance_cmd;
 pub mod commands;
 pub mod mutate;
 pub mod output;

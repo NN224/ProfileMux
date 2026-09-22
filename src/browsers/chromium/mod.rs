@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod avatar;
 pub mod clone;
 pub mod discovery;

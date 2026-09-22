@@ -1,4 +1,5 @@
 pub mod app;
+pub mod appearance_dialog;
 pub mod dialogs;
 pub mod events;
 pub mod form;

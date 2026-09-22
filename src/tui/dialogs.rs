@@ -232,6 +232,11 @@ pub enum PendingAction {
     },
     /// Download, verify and install the named release.
     InstallUpdate { latest: String },
+    SetAppearance {
+        browser_index: usize,
+        profile: BrowserProfile,
+        spec: crate::domain::AppearanceSpec,
+    },
 }
 
 /// Default page scroll step for modal dialogs.
@@ -427,6 +432,7 @@ pub enum Dialog {
     Doctor(DoctorDialog),
     Error(ErrorDialog),
     Update(UpdateDialog),
+    Appearance(crate::tui::appearance_dialog::AppearanceDialog),
 }
 
 impl Dialog {
@@ -461,6 +467,7 @@ impl Dialog {
             Dialog::Doctor(d) => d.activate_selected(),
             Dialog::Error(e) => e.activate_selected(),
             Dialog::Update(u) => u.activate_selected(),
+            Dialog::Appearance(a) => a.activate_selected(),
         }
     }
 }

@@ -258,6 +258,27 @@ pub fn account_email_line(profile: &BrowserProfile) -> Line<'static> {
     detail_line("Account Email:    ", account_email_display(profile))
 }
 
+pub fn profile_appearance(
+    app: &App,
+    id: &crate::domain::ProfileId,
+) -> (crate::domain::BrowserTheme, crate::domain::WebDarkMode) {
+    match app.appearance_cache.get(id) {
+        Some(a) => (a.theme, a.web_dark),
+        None => (
+            crate::domain::BrowserTheme::Unknown,
+            crate::domain::WebDarkMode::Normal,
+        ),
+    }
+}
+
+pub fn browser_theme_line(theme: crate::domain::BrowserTheme) -> Line<'static> {
+    detail_line("Browser Theme:    ", theme.label())
+}
+
+pub fn web_dark_mode_line(mode: crate::domain::WebDarkMode) -> Line<'static> {
+    detail_line("Web Dark Mode:    ", mode.label())
+}
+
 fn render_details_pane(frame: &mut Frame, area: Rect, app: &App) {
     let block = pane_block("Details", app.focus == Focus::Details);
 
@@ -273,6 +294,7 @@ fn render_details_pane(frame: &mut Frame, area: Rect, app: &App) {
 
     let is_scanning = app.scanning_profiles.contains(&profile.id);
     let (total_s, core_s, cache_s, code_s, gpu_s) = format_storage(profile, is_scanning);
+    let (theme, web_dark) = profile_appearance(app, &profile.id);
 
     let avatar_str = match &profile.avatar {
         Some(av) => {
@@ -315,6 +337,8 @@ fn render_details_pane(frame: &mut Frame, area: Rect, app: &App) {
         detail_line("Cache Path:       ", &cache_str),
         detail_line("Avatar:           ", &avatar_str),
         account_email_line(profile),
+        browser_theme_line(theme),
+        web_dark_mode_line(web_dark),
         detail_line("Last Active:      ", &last_active_str),
         detail_line(
             "Registered:       ",
@@ -409,6 +433,13 @@ fn update_status_line(app: &App, width: u16) -> Line<'static> {
 
 fn render_action_bar(frame: &mut Frame, area: Rect, app: &App) {
     let caps = app.current_browser().map(|b| b.capabilities);
+    let has_theme = app
+        .current_browser()
+        .map(|b| {
+            let c = b.adapter.appearance_capabilities();
+            c.browser_theme || c.ultra_dark || c.web_dark
+        })
+        .unwrap_or(false);
 
     let actions = [
         ("N", "New", caps.map(|c| c.create).unwrap_or(false)),
@@ -425,6 +456,7 @@ fn render_action_bar(frame: &mut Frame, area: Rect, app: &App) {
             "Avatar",
             caps.map(|c| c.custom_avatar).unwrap_or(false),
         ),
+        ("T", "Theme", has_theme),
         ("O", "Folder", caps.map(|c| c.open_folder).unwrap_or(false)),
         ("X", "Clean", caps.map(|c| c.clean_cache).unwrap_or(false)),
         ("H", "Doctor", true),
@@ -520,6 +552,7 @@ fn render_help_overlay(frame: &mut Frame) {
         detail_line("R:               ", "Rename display name"),
         detail_line("D:               ", "Delete profile (moves to Trash)"),
         detail_line("A:               ", "Set custom profile avatar"),
+        detail_line("T:               ", "Appearance dialog"),
         detail_line("O:               ", "Open profile folder in Finder"),
         detail_line("X:               ", "Clean cache"),
         detail_line("H:               ", "Doctor health findings"),
@@ -637,6 +670,7 @@ fn render_profile_overlay(frame: &mut Frame, app: &App) {
 
     let is_scanning = app.scanning_profiles.contains(&profile.id);
     let (total_s, core_s, cache_s, code_s, gpu_s) = format_storage(profile, is_scanning);
+    let (theme, web_dark) = profile_appearance(app, &profile.id);
 
     let avatar_str = match &profile.avatar {
         Some(av) => {
@@ -668,6 +702,8 @@ fn render_profile_overlay(frame: &mut Frame, app: &App) {
         detail_line("Cache Path:       ", &cache_str),
         detail_line("Avatar:           ", &avatar_str),
         account_email_line(profile),
+        browser_theme_line(theme),
+        web_dark_mode_line(web_dark),
         detail_line("Last Active:      ", &last_active_str),
         detail_line(
             "Registered:       ",
@@ -741,5 +777,13 @@ mod tests {
         assert_eq!(line.spans.len(), 2);
         assert_eq!(line.spans[0].content.as_ref(), "Account Email:    ");
         assert_eq!(line.spans[1].content.as_ref(), "Not signed in");
+    }
+
+    #[test]
+    fn test_appearance_detail_lines() {
+        let theme_line = browser_theme_line(crate::domain::BrowserTheme::UltraDark);
+        assert_eq!(theme_line.spans[1].content.as_ref(), "Ultra Dark");
+        let web_line = web_dark_mode_line(crate::domain::WebDarkMode::Normal);
+        assert_eq!(web_line.spans[1].content.as_ref(), "Off");
     }
 }

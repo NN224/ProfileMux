@@ -10,6 +10,7 @@ pub mod domain;
 pub mod error;
 pub mod fs;
 pub mod platform;
+pub mod policy;
 pub mod tui;
 pub mod update;
 

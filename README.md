@@ -58,6 +58,7 @@
 - [Command Reference](#command-reference)
 - [Profile Selectors](#profile-selectors)
 - [Clone and Template Policies](#clone-and-template-policies)
+- [Appearance](#appearance)
 - [Cache Management](#cache-management)
 - [Doctor and Health Diagnostics](#doctor-and-health-diagnostics)
 - [System Architecture](#system-architecture)
@@ -137,6 +138,8 @@ Both interfaces share a single core library (`profilemux`), guaranteeing identic
 ### Customization
 
 - Custom profile avatar on Brave builds that claim the capability
+- Per-profile browser theme selection (System, Dark, and Brave Ultra Dark)
+- Launch-time web-content Force Dark policy for ProfileMux-launched windows
 - Deterministic, filesystem-safe directory naming derived from the display name
 - Fuzzy filtering and search across profiles in the TUI
 
@@ -332,12 +335,12 @@ Create a profile from a template:
 Running `pmux` without subcommands opens the interactive three-pane dashboard:
 - **Browsers (Left)**: Discovered installations, release channels, support status, and registered profile counts.
 - **Profiles (Center)**: Profiles for the active browser with display names, directories, and health status indicators.
-- **Details (Right)**: Metadata (including account email), process state, storage breakdown, and diagnostic findings.
+- **Details (Right)**: Metadata (including account email, and `Browser Theme:` and `Web Dark Mode:` rows), process state, storage breakdown, and diagnostic findings.
 
-A non-blocking status-bar indicator notifies when a newer ProfileMux release is available.
+A non-blocking status-bar indicator notifies when a newer ProfileMux release is available. Pressing `T` opens the Appearance dialog to configure the Browser UI theme (System, Dark, Ultra Dark) and Web content dark mode (Normal, Force Dark); unsupported options are shown disabled with a concise reason (such as `unavailable - Brave-only`).
 
 ```text
-N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean   H Doctor   / Search   ? Help   Q Quit
+N New   C Clone   R Rename   D Delete   L Launch   A Avatar   T Theme   O Folder   X Clean   H Doctor   / Search   ? Help   Q Quit
 ```
 
 ### Dashboard Keybindings
@@ -359,6 +362,7 @@ N New   C Clone   R Rename   D Delete   L Launch   A Avatar   O Folder   X Clean
 | `R` | Open Rename Profile dialog |
 | `D` | Open Delete Profile confirmation dialog |
 | `A` | Open Set Avatar dialog |
+| `T` | Open Appearance dialog |
 | `O` | Reveal profile folder in Finder |
 | `X` | Open Clean Cache confirmation dialog |
 | `H` | Open Doctor health findings overlay |
@@ -519,6 +523,28 @@ pmux profile avatar brave/Default ~/Pictures/avatar.png
 
 Normalizes images to 256x256 PNG format, installs `Google Profile Picture.png` inside the profile directory, and updates `Local State` avatar configuration.
 
+### Inspect and Set Appearance
+
+Inspect appearance settings:
+
+```bash
+pmux profile appearance brave/Default
+```
+
+Set browser theme to Ultra Dark (requires browser closed):
+
+```bash
+pmux profile appearance brave/Default --theme ultra-dark --close-browser
+```
+
+Simulate appearance changes with dry-run:
+
+```bash
+pmux profile appearance brave/Default --theme ultra-dark --dry-run
+```
+
+Changing the theme writes profile preferences and requires the browser to be closed. Changing web dark (`--web-dark off|force`) writes only ProfileMux's launch policy and does not require the browser to be closed.
+
 ### Delete a Profile
 
 Safely moves the profile folder and external cache directory to `~/.Trash` and deregisters the profile from `Local State`:
@@ -554,10 +580,11 @@ pmux profile delete brave/Profile-2 --yes --close-browser
 | `pmux profile clone <selector>` | Clone an existing profile |
 | `pmux profile rename <selector>` | Rename the display name, or the directory with `--directory` |
 | `pmux profile avatar <selector> <image>` | Set a custom profile avatar |
+| `pmux profile appearance <selector>` | Inspect or configure browser theme and web dark mode |
 | `pmux profile delete <selector>` | Move a profile and its cache to the Trash |
 | `pmux cache clean <selector>` | Remove only verified cache locations |
 
-Read-only commands accept `--json`. `create`, `clone`, `rename`, `delete` and
+Read-only commands accept `--json`. `create`, `clone`, `rename`, `appearance`, `delete` and
 `cache clean` accept `--dry-run` and `--close-browser`; `delete` and
 `cache clean` additionally accept `--yes`. `profile avatar` takes no flags — it
 still refuses to run while the target browser is open, but has no
@@ -649,6 +676,35 @@ Extension copying is controlled by `--extensions <none|copy|copy-settings>`:
 - `copy-settings`: Copies `Extensions`, `Local Extension Settings`, and `Sync Extension Settings`.
 
 > Extension copying is experimental. Chromium signs extension registrations in `Secure Preferences` with a per-profile Message Authentication Code (MAC). ProfileMux deliberately does not forge these signatures. Copied extensions may be dropped by the browser on next launch.
+
+---
+
+## Appearance
+
+ProfileMux treats browser appearance as two independent mechanisms:
+
+- **Browser UI theme** (per-profile): Controls the browser frame, toolbar, and tab strip colour scheme. It is stored in the profile's `Preferences` file at `browser.theme.color_scheme2` (0 is System, 1 is Light, 2 is Dark, and an absent key means System). Brave's darker UI variant is stored in the same file at `brave.darker_mode` (boolean, Brave-only). Setting `brave.darker_mode` alone does not put Brave into dark mode; ProfileMux writes the dark colour scheme as well when Ultra Dark is selected. It also writes `browser.theme.follows_system_colors`, because a profile that still follows the system colours has its scheme recomputed and reset on the next launch — verified live. Modifying the theme updates profile preferences on disk and requires the browser to be closed.
+- **Web-content Force Dark** (launch policy): Chromium's automatic darkening of web pages. Force Dark is not a per-profile preference: Chromium stores `chrome://flags` experiments in `browser.enabled_labs_experiments` inside `Local State`, which is browser-wide and cannot express a per-profile choice. ProfileMux implements it as its own launch policy instead, passing `--enable-features=WebContentsForceDark` when spawning the browser for that profile. It applies only to browser windows ProfileMux launches, does not require the browser to be closed to change, and windows opened from the Dock will not have it.
+
+`Ultra Dark` is Brave's darker UI theme; `Force Dark` is Chromium's automatic darkening of web content. They are separate technologies and not equivalent.
+
+Force Dark can change how pages look and is not a site's native dark mode.
+
+| Capability | Status |
+| --- | --- |
+| Browser theme (System/Dark) | Supported |
+| Brave Ultra Dark | Supported |
+| Force Dark websites | Experimental |
+
+Brave Stable and Brave Beta support System, Dark, and Ultra Dark. Google Chrome and other Chromium-family builds support System and Dark; Ultra Dark is Brave-only and is not offered on them. Force Dark is available wherever ProfileMux can launch the profile, and is Experimental.
+
+A profile the browser has never opened writes its own first-run defaults on first
+launch, which overwrite a theme set beforehand. Theme a profile the browser has
+already opened at least once.
+
+### Template Clones
+
+Appearance settings carry over naturally when cloning or creating from a template because the sanitized `Preferences` copy already carries these keys. No second copy mechanism was added, and private session and credential data remain excluded as before.
 
 ## Cache Management
 

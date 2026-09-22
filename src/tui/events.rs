@@ -4,10 +4,10 @@ use crate::tui::app::App;
 use crate::tui::keymap::map_key;
 
 #[path = "events_actions.rs"]
-mod events_actions;
+pub mod events_actions;
 
 #[path = "events_dialogs.rs"]
-mod events_dialogs;
+pub mod events_dialogs;
 
 pub use events_actions::check_capability;
 use events_actions::execute_action;

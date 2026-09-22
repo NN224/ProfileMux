@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::browsers::BrowserAdapter;
 use crate::domain::{
-    AvatarInfo, BrowserCapabilities, BrowserInstall, BrowserKind, BrowserProfile, CloneProfileSpec,
-    CreateProfileSpec, DeleteMode, HealthFinding, OperationPlan, ProfileId, ProfileStoreSnapshot,
+    Appearance, AppearanceCapabilities, AppearanceSpec, AvatarInfo, BrowserCapabilities,
+    BrowserInstall, BrowserKind, BrowserProfile, CloneProfileSpec, CreateProfileSpec, DeleteMode,
+    HealthFinding, OperationPlan, ProfileId, ProfileStoreSnapshot,
 };
 use crate::error::{Error, Result};
 
@@ -279,6 +280,30 @@ impl BrowserAdapter for ChromiumAdapter {
 
     fn clean_cache(&self, profile: &BrowserProfile) -> Result<u64> {
         super::mutation::clean_cache(&self.install, profile)
+    }
+
+    fn appearance_capabilities(&self) -> AppearanceCapabilities {
+        super::appearance::capabilities(self.install.kind)
+    }
+
+    fn read_appearance(&self, profile: &BrowserProfile) -> Result<Appearance> {
+        let is_brave = matches!(
+            self.install.kind,
+            BrowserKind::Brave | BrowserKind::BraveBeta | BrowserKind::BraveNightly
+        );
+        super::appearance::read_appearance(&profile.path, is_brave)
+    }
+
+    fn plan_set_appearance(
+        &self,
+        profile: &BrowserProfile,
+        spec: &AppearanceSpec,
+    ) -> Result<OperationPlan> {
+        super::appearance::plan(&self.install, profile, spec, self.appearance_capabilities())
+    }
+
+    fn set_appearance(&self, profile: &BrowserProfile, spec: &AppearanceSpec) -> Result<()> {
+        super::appearance::apply(&self.install, profile, spec, self.appearance_capabilities())
     }
 }
 

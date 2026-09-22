@@ -1,6 +1,7 @@
 use crossterm::event::KeyCode;
 
 use crate::tui::app::App;
+use crate::tui::appearance_dialog::{AppearanceControl, AppearanceDialog};
 use crate::tui::dialogs::{
     expand_tilde, BrowserRunningDialog, ConfirmButton, ConfirmationDialog, Dialog, DialogOutcome,
     DoctorDialog, ErrorDialog, PendingAction, QuitWaitState, TextInputDialog, TextInputKind,
@@ -28,6 +29,7 @@ pub fn handle_dialog_key(app: &mut App, code: KeyCode) {
         Dialog::Doctor(d) => handle_doctor_key(app, d, code),
         Dialog::Error(e) => handle_error_key(app, e, code),
         Dialog::Update(u) => handle_update_key(app, u, code),
+        Dialog::Appearance(a) => handle_appearance_key(app, a, code),
     };
 
     if let Some(d) = retained {
@@ -293,6 +295,7 @@ fn confirm_action(app: &mut App, plan: crate::domain::OperationPlan, action: Pen
         PendingAction::DeleteProfile { browser_index, .. } => *browser_index,
         PendingAction::SetAvatar { browser_index, .. } => *browser_index,
         PendingAction::CleanCache { browser_index, .. } => *browser_index,
+        PendingAction::SetAppearance { browser_index, .. } => *browser_index,
         // An update touches no browser, so no browser preflight applies.
         PendingAction::InstallUpdate { .. } => {
             app.queue_mutation(action);
@@ -421,4 +424,70 @@ fn handle_update_key(app: &mut App, mut d: UpdateDialog, code: KeyCode) -> Optio
         _ => {}
     }
     Some(Dialog::Update(d))
+}
+
+fn handle_appearance_key(app: &mut App, mut d: AppearanceDialog, code: KeyCode) -> Option<Dialog> {
+    match code {
+        KeyCode::Tab => d.next_control(),
+        KeyCode::BackTab => d.prev_control(),
+        KeyCode::Up => d.move_up(),
+        KeyCode::Down => d.move_down(),
+        KeyCode::Left => {
+            if d.focused_control == AppearanceControl::Buttons {
+                d.focused_button = ConfirmButton::Action;
+            }
+        }
+        KeyCode::Right => {
+            if d.focused_control == AppearanceControl::Buttons {
+                d.focused_button = ConfirmButton::Safe;
+            }
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => match d.activate_selected() {
+            DialogOutcome::Activate => {
+                apply_appearance(app, d);
+                return None;
+            }
+            DialogOutcome::Close => {
+                app.close_dialog();
+                return None;
+            }
+            DialogOutcome::None => {
+                d.select_focused();
+            }
+        },
+        _ => {}
+    }
+    Some(Dialog::Appearance(d))
+}
+
+fn apply_appearance(app: &mut App, d: AppearanceDialog) {
+    let spec = d.to_spec();
+    if spec.is_empty() {
+        app.close_dialog();
+        return;
+    }
+    let b_idx = d.browser_index;
+    let action = PendingAction::SetAppearance {
+        browser_index: b_idx,
+        profile: d.profile,
+        spec,
+    };
+    let is_running = app
+        .browsers
+        .get(b_idx)
+        .map(|b| b.adapter.is_running())
+        .unwrap_or(false);
+
+    if spec.theme.is_some() && is_running {
+        let name = app
+            .browsers
+            .get(b_idx)
+            .map(|b| b.install.name.clone())
+            .unwrap_or_default();
+        app.open_dialog(Dialog::BrowserRunning(BrowserRunningDialog::new(
+            b_idx, name, action,
+        )));
+    } else {
+        app.queue_mutation(action);
+    }
 }

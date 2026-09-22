@@ -42,6 +42,7 @@ pub fn render_dialog(frame: &mut Frame, _app: &App, dialog: &Dialog) {
         Dialog::Doctor(doc) => render_doctor(frame, doc),
         Dialog::Error(err) => render_error(frame, err),
         Dialog::Update(u) => render_update(frame, u),
+        Dialog::Appearance(a) => render_appearance(frame, a),
     }
 }
 
@@ -477,6 +478,81 @@ fn render_update(frame: &mut Frame, dialog: &UpdateDialog) {
     let b_cancel = button_span("Cancel", dialog.focused_button == ConfirmButton::Safe);
     frame.render_widget(
         Paragraph::new(Line::from(vec![b_update, Span::raw("  "), b_cancel]))
+            .alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
+fn appearance_lines(
+    dialog: &crate::tui::appearance_dialog::AppearanceDialog,
+) -> Vec<Line<'static>> {
+    use crate::tui::appearance_dialog::AppearanceControl;
+    dialog
+        .lines()
+        .into_iter()
+        .map(|text| {
+            let is_focused = match dialog.focused_control {
+                AppearanceControl::BrowserUi => text.contains(dialog.focused_theme.label()),
+                AppearanceControl::WebContent => match dialog.focused_web_dark {
+                    crate::domain::WebDarkMode::Normal => text.contains("Normal"),
+                    crate::domain::WebDarkMode::ForceDark => text.contains("Force Dark"),
+                },
+                AppearanceControl::Buttons => false,
+            };
+            if is_focused {
+                Line::styled(
+                    text,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::raw(text)
+            }
+        })
+        .collect()
+}
+
+fn render_appearance(frame: &mut Frame, dialog: &crate::tui::appearance_dialog::AppearanceDialog) {
+    let rendered_lines = appearance_lines(dialog);
+    let max_len = rendered_lines
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(40)
+        .max(52);
+    let width = compute_dialog_width(max_len, frame.area().width).max(56);
+    let height = compute_dialog_height(rendered_lines.len(), frame.area().height).max(14);
+    let area = modal_rect(width, height, frame.area());
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(dialog_block("Appearance"), area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .margin(1)
+        .split(area);
+
+    let visible_h = chunks[0].height as usize;
+    let visible = visible_lines(&rendered_lines, 0, visible_h, chunks[0].width as usize);
+    frame.render_widget(
+        Paragraph::new(visible).wrap(Wrap { trim: false }),
+        chunks[0],
+    );
+
+    let is_btn =
+        dialog.focused_control == crate::tui::appearance_dialog::AppearanceControl::Buttons;
+    let b_apply = button_span(
+        "Apply",
+        is_btn && dialog.focused_button == ConfirmButton::Action,
+    );
+    let b_cancel = button_span(
+        "Cancel",
+        is_btn && dialog.focused_button == ConfirmButton::Safe,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![b_apply, Span::raw("  "), b_cancel]))
             .alignment(Alignment::Right),
         chunks[1],
     );

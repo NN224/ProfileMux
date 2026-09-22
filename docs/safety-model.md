@@ -151,9 +151,24 @@ Cache cleanup **never** removes or alters:
 - `Web Data`
 - Custom profile pictures (`Google Profile Picture.png`)
 
+## Appearance Safety
+
+Profile appearance modifications fall into two distinct safety lifecycles depending on whether the setting affects browser chrome or web content:
+
+### Browser UI Theme Writes
+A theme change is a profile-preference write and therefore goes through the exact lifecycle enforced for every other structural mutation:
+- **Browser-running preflight**: Verifies that the browser is closed before mutating profile preferences, refusing execution if the target user data root is active unless `--close-browser` is passed or Quit Browser is confirmed.
+- **OperationPlan**: Constructs a deterministic execution plan detailing the target file, existing settings, and planned mutations, previewable via `--dry-run`.
+- **Transaction and backup**: Executes inside a `Transaction` that backs up the profile's `Preferences` file to the isolated temporary backup directory before rewriting it.
+- **Key preservation**: Parses `Preferences` as JSON, updates `browser.theme.color_scheme2` (and `brave.darker_mode` when Ultra Dark is selected), and preserves every unrelated preference key in the document untouched. ProfileMux never writes `Preferences` outside that transaction layer.
+- **Validation and rollback**: Validates the written file by re-reading it. On failure, panic, or early return, the transaction unwinds and restores the backup.
+
+### Web-Content Force Dark Launch Policy
+Web-content Force Dark touches no browser profile or `Local State` file at all. It lives in ProfileMux's own small JSON policy file under the OS config directory (`~/.config/profilemux/`), storing only the profile id and the chosen mode. Because no browser files are modified, changing web dark requires no browser shutdown, does not lock profiles, and introduces no risk of file corruption. ProfileMux applies the policy strictly at launch time by appending `--enable-features=WebContentsForceDark` when it spawns the browser.
+
 ## Dry-Run Verification
 
-The structural operations `create`, `clone`, `rename`, `delete` and `cache clean` support `--dry-run`. `profile avatar` has no `--dry-run` flag; it is still gated by the browser-running preflight and still writes inside a transaction.
+The structural operations `create`, `clone`, `rename`, `appearance`, `delete` and `cache clean` support `--dry-run`. `profile avatar` has no `--dry-run` flag; it is still gated by the browser-running preflight and still writes inside a transaction.
 - The adapter computes the entire `OperationPlan`, including affected paths, steps, exclusions, and estimated reclaimed bytes.
 - The plan is rendered to stdout without modifying disk or terminating processes.
 

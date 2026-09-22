@@ -38,6 +38,7 @@ pub fn execute_action(app: &mut App, action: Action) {
         Action::Doctor => handle_doctor(app),
         Action::Update => handle_update(app),
         Action::CleanCache => handle_clean_cache(app),
+        Action::Appearance => handle_appearance(app),
     }
 }
 
@@ -265,5 +266,144 @@ fn handle_update(app: &mut App) {
             app.status_message =
                 Some(crate::tui::update_check::disabled_reason(other.as_ref()).to_string());
         }
+    }
+}
+
+fn handle_appearance(app: &mut App) {
+    let Some(browser) = app.current_browser() else {
+        app.status_message = Some("No browser selected".to_string());
+        return;
+    };
+    let caps = browser.adapter.appearance_capabilities();
+    if !caps.browser_theme && !caps.ultra_dark && !caps.web_dark {
+        let reason = caps
+            .reason_unavailable("theme")
+            .unwrap_or("not supported by this browser");
+        app.status_message = Some(reason.to_string());
+        return;
+    }
+    let Some(profile) = app.current_profile().cloned() else {
+        app.status_message = Some("No profile selected".to_string());
+        return;
+    };
+    let current_appearance = match browser.adapter.read_appearance(&profile) {
+        Ok(a) => a,
+        Err(e) => {
+            app.open_dialog(Dialog::Error(ErrorDialog {
+                title: "Read Appearance Failed".to_string(),
+                message: e.to_string(),
+            }));
+            return;
+        }
+    };
+    let policy = crate::policy::default_path()
+        .ok()
+        .and_then(|p| crate::policy::load(&p).ok())
+        .map(|s| s.get(&profile.id))
+        .unwrap_or_default();
+
+    let dialog = crate::tui::appearance_dialog::AppearanceDialog::new(
+        app.selected_browser,
+        profile,
+        caps,
+        current_appearance,
+        policy,
+    );
+    app.open_dialog(Dialog::Appearance(dialog));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::browsers::BrowserAdapter;
+    use crate::domain::{
+        AppearanceCapabilities, BrowserCapabilities, BrowserInstall, BrowserInstallId, BrowserKind,
+        BrowserProfile, Channel, HealthFinding, ProfileId, ProfileStoreSnapshot, SupportLevel,
+    };
+    use crate::error::Result;
+    use crate::tui::app::BrowserItem;
+    use std::path::{Path, PathBuf};
+
+    struct TestAdapter {
+        install: BrowserInstall,
+        caps: BrowserCapabilities,
+        app_caps: AppearanceCapabilities,
+    }
+
+    impl BrowserAdapter for TestAdapter {
+        fn install(&self) -> &BrowserInstall {
+            &self.install
+        }
+        fn capabilities(&self) -> BrowserCapabilities {
+            self.caps
+        }
+        fn appearance_capabilities(&self) -> AppearanceCapabilities {
+            self.app_caps
+        }
+        fn snapshot(&self) -> Result<ProfileStoreSnapshot> {
+            Ok(ProfileStoreSnapshot::default())
+        }
+        fn doctor(&self) -> Result<Vec<HealthFinding>> {
+            Ok(Vec::new())
+        }
+        fn is_running(&self) -> bool {
+            false
+        }
+    }
+
+    fn make_test_app(app_caps: AppearanceCapabilities) -> App {
+        let install = BrowserInstall {
+            id: BrowserInstallId::new(BrowserKind::Chromium, Path::new("/tmp/test-data")),
+            name: "Test Browser".to_string(),
+            kind: BrowserKind::Chromium,
+            channel: Channel::Stable,
+            app_path: PathBuf::from("/Applications/Test.app"),
+            user_data_root: PathBuf::from("/tmp/test-data"),
+            cache_root: None,
+            bundle_id: None,
+            version: None,
+            support: SupportLevel::Full,
+        };
+        let profile = BrowserProfile {
+            id: ProfileId::new(&install.id, "Default"),
+            install_id: install.id.clone(),
+            display_name: "Default".to_string(),
+            directory: "Default".to_string(),
+            path: PathBuf::from("/tmp/test-data/Default"),
+            cache_path: None,
+            avatar: None,
+            account_email: None,
+            last_active: None,
+            registered: true,
+            directory_exists: true,
+            size: None,
+        };
+        let adapter = Box::new(TestAdapter {
+            install: install.clone(),
+            caps: BrowserCapabilities::READ_ONLY,
+            app_caps,
+        });
+        let browser_item = BrowserItem {
+            install,
+            capabilities: BrowserCapabilities::READ_ONLY,
+            is_running: false,
+            profiles: vec![profile],
+            doctor_findings: Vec::new(),
+            adapter,
+        };
+        App::with_browsers(vec![browser_item])
+    }
+
+    #[test]
+    fn test_pressing_t_when_browser_reports_no_appearance_capability_shows_reason() {
+        let mut app = make_test_app(AppearanceCapabilities::NONE);
+        execute_action(&mut app, Action::Appearance);
+
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("not supported by this browser")
+        );
+        assert!(app.active_dialog.is_none());
+        assert!(app.pending_mutation.is_none());
     }
 }

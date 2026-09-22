@@ -91,6 +91,9 @@ pub enum ProfileSubcommand {
 
     /// Delete a profile and move it to Trash
     Delete(ProfileDeleteArgs),
+
+    /// View or change profile appearance
+    Appearance(ProfileAppearanceArgs),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -277,6 +280,32 @@ pub struct ProfileDeleteArgs {
 }
 
 #[derive(Args, Debug, Clone)]
+pub struct ProfileAppearanceArgs {
+    /// Profile selector (ProfileId, slug/dir, or name)
+    pub selector: String,
+
+    /// Browser theme (system, dark, ultra-dark)
+    #[arg(long, value_parser = ["system", "dark", "ultra-dark"])]
+    pub theme: Option<String>,
+
+    /// Web dark mode policy (off, force)
+    #[arg(long, value_parser = ["off", "force"])]
+    pub web_dark: Option<String>,
+
+    /// Simulate appearance change without making changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Close browser if running
+    #[arg(long)]
+    pub close_browser: bool,
+
+    /// Skip interactive confirmation
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Args, Debug, Clone)]
 pub struct CacheCleanArgs {
     /// Profile selector (ProfileId, slug/dir, or name)
     pub selector: String,
@@ -369,6 +398,9 @@ pub fn execute(command: Command) -> anyhow::Result<std::process::ExitCode> {
             ProfileSubcommand::Rename(args) => crate::cli::mutate::run_profile_rename(args),
             ProfileSubcommand::Avatar(args) => crate::cli::mutate::run_profile_avatar(args),
             ProfileSubcommand::Delete(args) => crate::cli::mutate::run_profile_delete(args),
+            ProfileSubcommand::Appearance(args) => {
+                crate::cli::appearance_cmd::run_profile_appearance(args)
+            }
         },
         Command::Cache { command: sub } => match sub {
             CacheSubcommand::Clean(args) => crate::cli::mutate::run_cache_clean(args),

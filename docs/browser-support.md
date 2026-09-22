@@ -18,24 +18,33 @@ Columns represent operational capabilities:
 - **Rename directory**: Renaming the physical on-disk profile folder.
 - **Delete**: Safely moving a profile and its caches to macOS Trash and deregistering from metadata.
 - **Clean cache**: Removing verified cache directories while preserving user data and credentials.
+- **Browser theme**: Per-profile browser UI colour scheme (System, Dark).
+- **Ultra Dark**: Brave-specific darker UI theme variant.
+- **Force Dark**: Launch-time automatic darkening of web contents via ProfileMux launch policy.
 
 Values are strictly marked as **Yes**, **No**, **Experimental**, or **Untested**.
 
-| Browser / Channel | Detect | List | Details | Sizes | Doctor | Launch | Create | Clone | Rename name | Avatar | Rename directory | Delete | Clean cache |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Brave Browser (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes |
-| **Brave Browser Beta** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes |
-| **Brave Browser Nightly** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Google Chrome (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Experimental | Yes | Yes |
-| **Google Chrome Beta** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Google Chrome Dev** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Google Chrome Canary** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Chromium** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Microsoft Edge (Stable)** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Microsoft Edge Beta** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Microsoft Edge Dev** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Microsoft Edge Canary** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
-| **Vivaldi** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| Browser / Channel | Detect | List | Details | Sizes | Doctor | Launch | Create | Clone | Rename name | Avatar | Rename directory | Delete | Clean cache | Browser theme | Ultra Dark | Force Dark |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Brave Browser (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes | Yes | Yes | Experimental |
+| **Brave Browser Beta** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Experimental | Yes | Yes | Yes | Yes | Experimental |
+| **Brave Browser Nightly** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Google Chrome (Stable)** | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No | Experimental | Yes | Yes | Yes | No | Experimental |
+| **Google Chrome Beta** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Google Chrome Dev** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Google Chrome Canary** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Chromium** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Microsoft Edge (Stable)** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Microsoft Edge Beta** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Microsoft Edge Dev** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Microsoft Edge Canary** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+| **Vivaldi** | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested | Untested |
+
+### Appearance Preferences and Launch Switches
+
+Browser UI colour scheme is a per-profile preference stored in each profile's `Preferences` file at `browser.theme.color_scheme2` (written together with `browser.theme.follows_system_colors`, without which the browser resets the scheme on the next launch), an integer where `0` is System, `1` is Light, and `2` is Dark (an absent key defaults to System). Brave's darker UI variant (Ultra Dark) is a per-profile preference in the same file at `brave.darker_mode`, a boolean existing only in Brave builds. Setting `brave.darker_mode` alone does not put Brave into dark mode; ProfileMux therefore writes the dark colour scheme (`browser.theme.color_scheme2 = 2`) as well when Ultra Dark is selected.
+
+Web-content Force Dark is not a per-profile preference. Chromium stores `chrome://flags` state in `browser.enabled_labs_experiments` inside `Local State`, which is browser-wide and cannot express a per-profile choice. ProfileMux implements per-profile Force Dark as its own launch policy instead, adding `--enable-features=WebContentsForceDark` when it launches that profile. Consequently, Force Dark applies only to browser windows ProfileMux itself launches, does not require the browser to be closed to change, and windows opened directly from the macOS Dock or Finder will not have it.
 
 ## Live Validation
 
